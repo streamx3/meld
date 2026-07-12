@@ -36,6 +36,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
+    QMessageBox,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -44,7 +45,7 @@ from PyQt6.QtWidgets import (
 from meldq import conf
 from meldq.conf import _
 from meldq.diffmap import DiffMap
-from meldq.doc import MeldDoc
+from meldq.doc import Direction, MeldDoc
 from meldq.engine import diffutil
 from meldq.linkmap import LinkMap
 from meldq.util import misc
@@ -55,6 +56,72 @@ from meldq.widgets.historycombo import FileHistoryCombo
 from meldq.widgets.msgarea import MsgAreaController, ResponseId
 
 MASK_SHIFT, MASK_CTRL = 1, 2
+
+# QTextCursor.selectedText() uses U+2029 (paragraph separator) for block breaks.
+_PARAGRAPH = "\u2029"
+
+
+def position_at_line_or_eof(doc, line):
+    """Document position of the start of `line`, or the last valid position
+    for the EOF sentinel (filediff.py:82-85)."""
+    if line >= doc.blockCount():
+        return doc.characterCount() - 1
+    return doc.findBlockByNumber(line).position()
+
+
+def insert_text_at_line(doc, line, text):
+    """Insert `text` at the start of `line`, prefixing a newline for the EOF
+    case (filediff.py:87-90, minus the tag)."""
+    if line >= doc.blockCount():
+        text = "\n" + text
+    cur = QTextCursor(doc)
+    cur.setPosition(position_at_line_or_eof(doc, line))
+    cur.insertText(text)
+
+
+def text_between_lines(doc, lo, hi):
+    cur = QTextCursor(doc)
+    cur.setPosition(position_at_line_or_eof(doc, lo))
+    cur.setPosition(position_at_line_or_eof(doc, hi),
+                    QTextCursor.MoveMode.KeepAnchor)
+    return cur.selectedText().replace(_PARAGRAPH, "\n")
+
+
+class FakeText:
+    """Lazy line-list view over a QTextDocument (filediff.py:392-410).
+
+    Slicing returns filtered lines; single indexing returns one unfiltered
+    line (matches the old __getitem__/__getslice__ split).
+    """
+
+    def __init__(self, doc, textfilter):
+        self.doc = doc
+        self.textfilter = textfilter
+
+    def __getitem__(self, key):
+        if isinstance(key, slice):
+            lo = key.start or 0
+            hi = self.doc.blockCount() if key.stop is None else key.stop
+            txt = self.textfilter(text_between_lines(self.doc, lo, hi))
+            if hi >= self.doc.blockCount():
+                return txt.split("\n")
+            return txt.split("\n")[:-1]
+        block = self.doc.findBlockByNumber(min(key, self.doc.blockCount() - 1))
+        return block.text()
+
+    def __len__(self):
+        return self.doc.blockCount()
+
+
+class FakeTextArray:
+    def __init__(self, docs, textfilter):
+        self.texts = [FakeText(d, textfilter) for d in docs]
+
+    def __getitem__(self, i):
+        return self.texts[i]
+
+    def __len__(self):
+        return len(self.texts)
 
 
 class CachedSequenceMatcher:
@@ -581,13 +648,90 @@ class FileDiff(MeldDoc):
         for i in self._diff_files(files, panetext):
             yield i
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- diff pipeline ----------------------------------------------------
+
+    def _get_texts(self, raw=0):
+        textfilter = [self._filter_text, lambda x: x][raw]
+        return FakeTextArray(self.textbuffer, textfilter)
+
+    def _filter_text(self, txt):
+        def killit(m):
+            assert m.group().count("\n") == 0
+            if len(m.groups()):
+                s = m.group()
+                for g in m.groups():
+                    if g:
+                        s = s.replace(g, "")
+                return s
+            return ""
+        r = None
+        try:
+            for c, r in self.regexes:
+                txt = c.sub(killit, txt)
+        except AssertionError:
+            if not self.warned_bad_comparison:
+                self.scheduler.paused = True
+                try:
+                    QMessageBox.warning(
+                        self.widget, "Meld",
+                        _("Regular expression '%s' changed the number of lines "
+                          "in the file. Comparison will be incorrect. See the "
+                          "user manual for more details.") % r)
+                finally:
+                    self.scheduler.paused = False
+                self.warned_bad_comparison = True
+        return txt
 
     def _diff_files(self, files, panetext):
-        yield 0                 # T6.4
+        yield _("[%s] Computing differences") % self.label_text
+        panetext = [self._filter_text(p) for p in panetext]
+        lines = [p.split("\n") for p in panetext]
+        step = self.linediffer.set_sequences_iter(lines)
+        while next(step) is None:
+            yield 1
+
+        chunk, prev, nxt = self.linediffer.locate_chunk(1, 0)
+        self.cursor.next_chunk = chunk if chunk is not None else nxt
+        cur = QTextCursor(self.textbuffer[1])
+        self.textview[1].setTextCursor(cur)
+        self.scheduler.add_task(lambda: self.next_diff(Direction.DOWN), True)
+        self._queue_draw()
+        self.scheduler.add_task(self._update_highlighting().__next__)
+        self._connect_buffer_handlers()
+        self._set_merge_action_sensitivity()
+        yield 0
+
+    def _get_focused_pane(self):
+        for i, view in enumerate(self.textview):
+            if view.hasFocus():
+                return i
+        return -1
 
     def _on_contents_change(self, pane, position, removed, added):
-        pass                    # T6.4
+        doc = self.textbuffer[pane]
+        new_count = doc.blockCount()
+        sizechange = new_count - self._prev_blockcount[pane]
+        self._prev_blockcount[pane] = new_count
+        startline = doc.findBlock(position).blockNumber()
+        self._after_text_modified(pane, startline, sizechange)
+
+    def _after_text_modified(self, pane, startline, sizechange):
+        if self.num_panes > 1:
+            self.linediffer.change_sequence(
+                pane, startline, sizechange, self._get_texts())
+            focused_pane = self._get_focused_pane()
+            if focused_pane != -1:
+                self.on_cursor_position_changed(focused_pane, force=True)
+            self.scheduler.add_task(self._update_highlighting().__next__)
+            self._queue_draw()
+
+    # ----- stubs completed by later WP6 tasks -------------------------------
+
+    def _update_highlighting(self):
+        yield 1                 # T6.6
+
+    def _set_merge_action_sensitivity(self):
+        pass                    # T6.9
 
     def on_cursor_position_changed(self, pane, force=False):
         pass                    # T6.11
