@@ -21,6 +21,7 @@ import functools
 import logging
 import os
 import re
+import struct
 import time
 import types
 
@@ -33,6 +34,7 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextCursor,
 )
+from PyQt6.QtWidgets import QTextEdit
 from PyQt6.QtWidgets import (
     QApplication,
     QGridLayout,
@@ -86,6 +88,17 @@ def text_between_lines(doc, lo, hi):
     cur.setPosition(position_at_line_or_eof(doc, hi),
                     QTextCursor.MoveMode.KeepAnchor)
     return cur.selectedText().replace(_PARAGRAPH, "\n")
+
+
+def utf16_units(s):
+    """UTF-16 code-unit values of `s` (no BOM: utf-16-le, so no strip).
+
+    These match QTextCursor positions exactly, so `base + offset` lands on
+    the right character even for astral-plane text (unlike GTK's char
+    counting, filediff.py:895-898).
+    """
+    b = s.encode("utf-16-le")
+    return struct.unpack("%dH" % (len(b) // 2), b)
 
 
 class FakeText:
@@ -782,10 +795,61 @@ class FileDiff(MeldDoc):
             self.scheduler.add_task(self._update_highlighting().__next__)
             self._queue_draw()
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- inline highlighting ----------------------------------------------
 
     def _update_highlighting(self):
-        yield 1                 # T6.6
+        # Wholesale rebuild of per-pane ExtraSelection lists. Unlike the GTK
+        # tag machinery, selections are replaced atomically, so the old
+        # progress-mark incremental cleaning is unnecessary. The expensive
+        # difflib call stays cached via self._cached_match.
+        alltexts = [t for t in self._get_texts(raw=1)]
+        newcache = set()
+        sels = [[] for _ in self.textbuffer]
+
+        def add_sel(pane, start_pos, end_pos):
+            sel = QTextEdit.ExtraSelection()
+            sel.format = self.inline_format
+            cur = QTextCursor(self.textbuffer[pane])
+            cur.setPosition(start_pos)
+            cur.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = cur
+            sels[pane].append(sel)
+
+        for chunk in self.linediffer.all_changes():
+            for i, c in enumerate(chunk):
+                if c and c[0] == "replace":
+                    pane1, panen = 1, i * 2
+                    cacheitem = (i, c, tuple(alltexts[1][c[1]:c[2]]),
+                                 tuple(alltexts[i * 2][c[3]:c[4]]))
+                    newcache.add(cacheitem)
+                    base1 = position_at_line_or_eof(self.textbuffer[pane1], c[1])
+                    basen = position_at_line_or_eof(self.textbuffer[panen], c[3])
+                    text1 = utf16_units("\n".join(alltexts[1][c[1]:c[2]]))
+                    textn = utf16_units("\n".join(alltexts[i * 2][c[3]:c[4]]))
+                    if len(text1) > 8000 and len(textn) > 8000:
+                        add_sel(pane1, base1,
+                                position_at_line_or_eof(self.textbuffer[pane1], c[2]))
+                        add_sel(panen, basen,
+                                position_at_line_or_eof(self.textbuffer[panen], c[4]))
+                        continue
+                    back = (0, 0)
+                    for o in self._cached_match(text1, textn):
+                        if o[0] == "equal":
+                            if (o[2] - o[1] < 3) or (o[4] - o[3] < 3):
+                                back = o[4] - o[3], o[2] - o[1]
+                            continue
+                        for j, (pane, base) in enumerate(((pane1, base1),
+                                                          (panen, basen))):
+                            add_sel(pane, base + o[1 + 2 * j] - back[j],
+                                    base + o[2 + 2 * j])
+                        back = (0, 0)
+                    yield 1
+        for pane, s in enumerate(sels):
+            self.textview[pane].setExtraSelections(s)
+        self._inline_cache = newcache
+        self._cached_match.clean(len(self._inline_cache))
+
+    # ----- stubs completed by later WP6 tasks -------------------------------
 
     def _set_merge_action_sensitivity(self):
         pass                    # T6.9
