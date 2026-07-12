@@ -34,6 +34,7 @@ from PyQt6.QtGui import (
     QTextCursor,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QGridLayout,
     QLabel,
     QMessageBox,
@@ -216,6 +217,9 @@ class FileDiff(MeldDoc):
             view.focus_line_fn = lambda: self.cursor.line
             view.fill_colors = self.fill_colors
             view.line_colors = self.line_colors
+            view.verticalScrollBar().valueChanged.connect(
+                lambda _v, i=i: self._sync_vscroll(i))
+            view.horizontalScrollBar().valueChanged.connect(self._sync_hscroll)
 
         self.prefs.changed.connect(self.on_preference_changed)
         self.set_num_panes(num_panes)
@@ -409,6 +413,59 @@ class FileDiff(MeldDoc):
             view.viewport().update()
         for i in range(self.num_panes - 1):
             self.linkmap[i].update()
+        for dm in self.diffmap:
+            dm.update()
+
+    # ----- synchronized scrolling -------------------------------------------
+
+    def _sync_hscroll(self, value):
+        if self._sync_hscroll_lock:
+            return
+        self._sync_hscroll_lock = True
+        for i in range(self.num_panes):
+            sb = self.textview[i].horizontalScrollBar()
+            if sb.value() != value:
+                sb.setValue(value)
+        self._sync_hscroll_lock = False
+
+    def _sync_vscroll(self, master):
+        # Line-unit port of filediff.py:1154-1206. QPlainTextEdit's vertical
+        # scrollbar is line-indexed with wrap off, so the GTK pixel math
+        # collapses to line arithmetic.
+        if self._sync_vscroll_lock:
+            return
+        shift = QApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+        if not shift:
+            self._sync_vscroll_lock = True
+            syncpoint = 0.5
+            line = (self.textview[master].first_visible_line_fraction()
+                    + self.textview[master].verticalScrollBar().pageStep() * syncpoint)
+            scrollbar_influence = ((1, 2), (0, 2), (1, 0))
+            for i in scrollbar_influence[master][:self.num_panes - 1]:
+                sb = self.textview[i].verticalScrollBar()
+                mbegin, mend = 0, self.textbuffer[master].blockCount()
+                obegin, oend = 0, self.textbuffer[i].blockCount()
+                for c in self.linediffer.pair_changes(master, i):
+                    if c[1] >= line:
+                        mend, oend = c[1], c[3]
+                        break
+                    elif c[2] >= line:
+                        mbegin, mend = c[1], c[2]
+                        obegin, oend = c[3], c[4]
+                        break
+                    else:
+                        mbegin, obegin = c[2], c[4]
+                fraction = (line - mbegin) / ((mend - mbegin) or 1)
+                other_line = obegin + fraction * (oend - obegin)
+                # GTK clamped to upper - page_size; QScrollBar.maximum()
+                # already excludes pageStep(), so clamp to maximum() directly.
+                val = other_line - sb.pageStep() * syncpoint
+                sb.setValue(round(min(max(val, sb.minimum()), sb.maximum())))
+                if i == 1:                       # central bar becomes the master
+                    master, line = 1, other_line
+            self._sync_vscroll_lock = False
+        for lm in self.linkmap[:self.num_panes - 1]:
+            lm.update()
         for dm in self.diffmap:
             dm.update()
 
