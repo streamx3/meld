@@ -95,6 +95,7 @@ meldq/widgets/treemodel.py   DiffTreeModel + traversal helpers (shared dirdiff/v
 meldq/util/misc.py           pure helpers — Qt imports FORBIDDEN (created WP2; WP4/WP7 append idempotently)
 meldq/util/prefs.py          Preferences(QObject) over QSettings
 meldq/resources/icons/       PNG icons (XPMs converted)
+meldq/locale/<lang>/LC_MESSAGES/meld.mo   compiled catalogs (gitignored build artifact; WP8 T8.5)
 meldq/ui/*.ui                Qt Designer files for STATIC dialogs only; dynamic views are code-built
 spikes/                      WP1 spike scripts (never imported by meldq/)
 tests/                       pytest + pytest-qt; tests/fixtures/ golden corpus
@@ -108,7 +109,7 @@ pyproject.toml               PEP 621; requires-python ">=3.11"; deps PyQt6>=6.6;
 | `engine.diffutil.Differ(QObject)` | `diffs_changed = pyqtSignal()` |
 | `engine.undo.UndoSequence(QObject)` | `can_undo_changed(bool)`, `can_redo_changed(bool)`, `checkpointed(object, bool)` (object = QTextDocument); `register_document`, `begin_group`/`end_group`, `undo`/`redo`, `checkpoint(doc)`, `clear()` |
 | `doc.MeldDoc(QObject)` | `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()`; owns `scheduler`, `prefs`, `undosequence`, `num_panes`, `label_text`; `Direction` enum lives in `meldq/doc.py` |
-| `util.prefs.Preferences(QObject)` | `changed = pyqtSignal(str)` (pref name); typed accessors; QSettings("Meld","Meld") |
+| `util.prefs.Preferences(QObject)` | `changed = pyqtSignal(str)` (pref name); typed accessors; QSettings("meldq","meldq"), IniFormat |
 
 ### 2.3 Undo redesign (normative — replaces GTK before-delete capture)
 
@@ -194,7 +195,10 @@ WP0 scaffolding
 
 Execute strictly in order WP0 → WP9 (WP5/WP6/WP7 may interleave at task level but land
 WP5's T5.1–T5.2 treemodel extensions before WP7's tree work). One task = one commit
-(`WP<n>.<m>: <summary>`), suite green before every commit.
+(`WP<n>.<m>: <summary>`), suite green before every commit. Exception: WP3's T3.8
+(new-comparison dialog) and the WP3 acceptance items that exercise it (AC3's
+`tests/test_newcomparison.py`, AC6) are deferred until WP4's T4.5 lands; WP3 closes with
+the Ctrl+N `QMessageBox` stub and T3.8 executes as the first task after T4.5.
 
 | WP | Scope | Effort (pd) |
 |---|---|---|
@@ -245,7 +249,7 @@ Create `meldq/__init__.py` (`__version__ = "2.0.0a0"`), a minimal `meldq/conf.py
 from it; WP3 replaces the stub with real locale binding), empty subpackages
 (`engine/`, `vc/`, `widgets/`, `util/`, `resources/icons/.gitkeep`, `ui/.gitkeep`),
 `tests/__init__.py`, and `pyproject.toml`:
-- `[project]` name `meldq`, dynamic nothing, `requires-python = ">=3.11"`,
+- `[project]` name `meldq`, `dynamic = ["version"]` with `[tool.setuptools.dynamic] version = {attr = "meldq.__version__"}` (WP8 T8.1 finalizes the rest of the file), `requires-python = ">=3.11"`,
   `dependencies = ["PyQt6>=6.6"]`, `[project.optional-dependencies] highlight = ["pygments"]`,
   dev extra: `pytest`, `pytest-qt`.
 - `[project.scripts] meldq = "meldq.main:main"` (main.py arrives in WP3; ship a stub
@@ -265,8 +269,9 @@ imports QtWidgets from the engine).
 
 **T0.3 — Golden-corpus directory layout.**
 Create `tests/fixtures/README.md` documenting the corpus format defined in WP2 (pairs/
-triples of input files + expected chunk JSON), and `tests/fixtures/diff2/`,
-`tests/fixtures/diff3/`, `tests/fixtures/encodings/` placeholders. No test logic yet —
+triples of input files + expected chunk JSON), and `tests/fixtures/engine/opcodes/`,
+`tests/fixtures/engine/merge3/`, `tests/fixtures/encodings/` placeholders (the paths WP2's
+T2.2/T2.4 and WP6's T6.3 actually populate). No test logic yet —
 WP2 owns generation; this task exists so fixture paths are stable from the start.
 
 ### Acceptance criteria
@@ -466,7 +471,7 @@ Everything else — `_update_merge_cache`, `_update_line_cache`, `_consume_blank
 **PyQt6 guidance:** zero-arg `pyqtSignal()`; connections are direct (synchronous) in a single thread, so consumers connected before `set_sequences_iter` runs observe the same mid-update timing GTK's `SIGNAL_RUN_FIRST` gave. Never move diffing to a thread.
 
 **TRAPS:**
-- `meld/diffutil.py:432` — `self.diffs[i] = matcher.get_difference_opcodes()`: the stored value MUST be a list (guaranteed by T2.1/item 5 rewrites). Add an assert-style regression test, not a runtime assert.
+- `meld/diffutil.py:432` — `self.diffs[i] = matcher.get_difference_opcodes()`: the stored value MUST be a list (guaranteed by the T2.1 item 1 and T2.3 item 5 rewrites). Add an assert-style regression test, not a runtime assert.
 - `meld/diffutil.py:197-203` `_locate_chunk` does `len(self.diffs[whichdiffs])` and enumerates it — second place lazy filters explode.
 - `meld/diffutil.py:342` `sequences_identical` compares `self.diffs == [[], []]` — filter objects never equal `[]`; with lists it's correct.
 - `meld/diffutil.py:421-435` `set_sequences_iter` is itself a generator calling `next(work)`. PEP 479: if `work` were exhausted, the escaping `StopIteration` becomes `RuntimeError`. The matcher protocol (final `yield 1` breaks the loop first) prevents this — preserve the protocol on both sides, and never wrap `next(work)` in a bare `except StopIteration: pass`.
@@ -544,6 +549,7 @@ Everything else — `_update_merge_cache`, `_update_line_cache`, `_consume_blank
 2. Replace the GObject-mimicking callback list (`meld/task.py:32, :37-42, :61-62`) with a plain attribute per the normative contract:
    ```python
    self.runnable_cb = None   # callable(scheduler) | None; set by owner
+   self.paused = False       # §2.5: docs set this around modal exec(); the pump skips paused schedulers
    ```
    `add_task` (`:44-62`) ends with `if self.runnable_cb is not None: self.runnable_cb(self)`. Delete `connect()`.
 3. `add_scheduler` (`:77-80`) → `sched.runnable_cb = self.add_task` (child scheduler passed as the task — same effect as the old lambda).
@@ -750,7 +756,7 @@ Build the PyQt6 application shell that every document type plugs into: `MeldWind
 
 - **WP0 (scaffolding)** — `meldq/` package exists with `meldq/__init__.py` containing `__version__ = "2.0.0a0"`; `pyproject.toml` with PyQt6>=6.6 and pytest + pytest-qt dev deps; `tests/` runnable. If WP0 has not landed, create the minimal skeleton as part of T3.1 (it is idempotent).
 - **WP2 (engine port)** — consumed APIs: `meldq/engine/task.py` (`FifoScheduler`/`LifoScheduler`, pure Python, `runnable_cb` callback attribute, `iteration()`, `tasks_pending()`, `add_task()`, `remove_task()`, `remove_scheduler()`) and `meldq/engine/undo.py` (`UndoSequence(QObject)` with `can_undo_changed(bool)`, `can_redo_changed(bool)` signals and `can_undo()`, `can_redo()`, `clear()` methods).
-- **Widgets WP (assumed WP4)** — `meldq/widgets/historycombo.py:FileHistoryCombo` blocks **T3.8 only** (exact consumed API listed there). All other tasks of WP3 have no widget dependencies; execute T3.8 last and skip it if the widget has not landed, leaving the `Ctrl+N` action wired to a `QMessageBox` stub.
+- **Widgets WP (assumed WP4)** — `meldq/widgets/historycombo.py:FileHistoryCombo` blocks **T3.8 only** (exact consumed API listed there). All other tasks of WP3 have no widget dependencies; execute T3.8 last and skip it if the widget has not landed, leaving the `Ctrl+N` action wired to a `QMessageBox` stub. Under the strict §3 order this is always the case: T3.8 — together with AC3's `tests/test_newcomparison.py` and AC6 — is executed as the first task after WP4's T4.5 lands.
 
 No doc WP (filediff/dirdiff/vcview) is a dependency: **all imports of doc modules in `app.py` must be lazy** (inside the `append_*` methods) so the shell runs and is testable before any view is ported (see T3.7).
 
@@ -782,7 +788,7 @@ No doc WP (filediff/dirdiff/vcview) is a dependency: **all imports of doc module
 | `meld/meldapp.py:342-414` | File/Edit menu dispatch incl. clipboard isinstance dispatch | `MeldWindow.on_menu_*` slots; clipboard via `focusWidget()` duck-typing |
 | `meld/meldapp.py:419-433` | preferences dialog launch, fullscreen, toggles | slots (prefs *dialog* itself is another WP; keep a stub slot) |
 | `meld/meldapp.py:438-450` | help/bug/about | `QDesktopServices.openUrl`; `MeldWindow.show_about()` |
-| `meld/meldapp.py:455-462` | next/prev diff via `gtk.gdk.SCROLL_*`; stop | `doc.py:NavDirection` enum; `current_doc().next_diff(...)`/`.stop()` |
+| `meld/meldapp.py:455-462` | next/prev diff via `gtk.gdk.SCROLL_*`; stop | `doc.py:Direction` enum; `current_doc().next_diff(...)`/`.stop()` |
 | `meld/meldapp.py:464-493` | `try_remove_page`, `on_file_changed` broadcast, `_append_page` | same-named methods on `MeldWindow` (T3.7) |
 | `meld/meldapp.py:495-554` | `append_dirdiff/filediff/diff/vcview` factories | same names, **lazy imports** (T3.7) |
 | `meld/meldapp.py:559-566` | `current_doc()` + DummyDoc null object | `MeldWindow.current_doc()` + module-level `_DummyDoc` |
@@ -1026,8 +1032,8 @@ class CloseResponse(enum.IntEnum):                    # replaces gtk.RESPONSE_* 
     CANCEL = 1    # doc vetoes close (and app quit)
     CLOSE = 2     # close without further callbacks (app-quit special case)
 
-class NavDirection(enum.IntEnum):                     # replaces gtk.gdk.SCROLL_DOWN/UP (meldapp.py:456-459)
-    DOWN = 1
+class Direction(enum.IntEnum):                        # replaces gtk.gdk.SCROLL_DOWN/UP (meldapp.py:456-459)
+    DOWN = 1                                          # §2.2: THE app-wide direction enum; WP5/WP6/WP7 import it
     UP = -1
 
 class MeldDoc(QObject):
@@ -1070,8 +1076,10 @@ class MeldDoc(QObject):
     def on_preference_changed(self, key: str): pass    # NOTE: 1-arg now (prefs.changed carries name only)
     def on_file_changed(self, filename: str): pass
     def set_labels(self, lst: list[str]): pass
-    def next_diff(self, direction: NavDirection): pass
+    def next_diff(self, direction: Direction): pass
     def on_focus_change(self): pass                    # called from MeldWindow.changeEvent
+    def on_container_switch_in_event(self): pass       # NO-ARG activation hook; T3.7 calls it on tab switch-in
+    def on_container_switch_out_event(self): pass      # counterpart, called on the outgoing doc
     def on_delete_event(self, appquit: bool = False) -> CloseResponse: return CloseResponse.OK
     def on_quit_event(self): pass                      # melddoc.py:137-141; vcview.py:357 overrides it
 ```
@@ -1089,7 +1097,7 @@ TRAPS:
 - `melddoc.py:106-107` — old code has a **method** `label_changed()` that emits the signal of the same name; in the new class the pyqtSignal owns that name. Delete the method; all call sites in doc WPs must use `self.label_changed.emit(self.label_text)`. Any subclass defining `def label_changed` will shadow the signal and break the shell silently.
 - `melddoc.py:36-41` — hyphenated signal names (`"label-changed"`) must not survive anywhere; grep for quotes-with-hyphen connect strings when porting call sites.
 - `melddoc.py:69,72` — `os.spawnvp(os.P_NOWAIT, ...)`: absent on Windows, discouraged everywhere; `subprocess.Popen` (no `shell=True`).
-- `melddoc.py:112-124` — `on_container_switch_in/out_event(uimanager)` and `self.ui_file`/`self.actiongroup`/`self.popup_menu` do **not** exist anymore; the doc-actions contract replaces them. Doc WPs own their context menus as plain `QMenu`s.
+- `melddoc.py:112-124` — the UIManager-arg `on_container_switch_in/out_event(uimanager)` and `self.ui_file`/`self.actiongroup`/`self.popup_menu` do **not** exist anymore; the doc-actions contract replaces the merge protocol. NO-ARG activation hooks of the same names remain on `MeldDoc` (see the listing) purely for focus/status refresh on tab switch. Doc WPs own their context menus as plain `QMenu`s.
 - PyQt single-QObject-base rule: `MeldDoc` is plain `QObject`; subclasses must use **composition** for their widget (`self.widget`), never multiple inheritance from `QWidget` + `MeldDoc` (D6).
 - `melddoc.py:90` calls `self.on_reload_activate(self, *extra)` — passes `self` twice (harmless py2 sloppiness); fix to `self.on_reload_activate(*extra)`.
 - Emitting `status_changed` with non-str payloads: old `'status-changed'` was PYOBJECT (`melddoc.py:39`); the contract narrows it to `str` — doc WPs must stringify.
@@ -1121,9 +1129,9 @@ class SchedulerPump(QObject):
 
 Semantics (normative, per contract):
 - `set_scheduler(s)`: on the old scheduler set `runnable_cb = None`; on the new set `s.runnable_cb = self._on_runnable`; start the timer iff `s.tasks_pending()` (emit `idle_changed(False)` on start).
-- `_tick()` — **one scheduler iteration per timer tick** (translation of `on_idle`, `meldapp.py:262-280`): `ret = self._scheduler.iteration()`; if `isinstance(ret, str)` → `status_message.emit(ret)`; elif `type(ret) is float` → `progress_fraction.emit(ret)`; elif `ret` → `progress_pulse.emit()`; then if `not self._scheduler.tasks_pending()`: `self._timer.stop()`; `status_message.emit("")`; `progress_fraction.emit(0.0)`; `idle_changed.emit(True)`.
+- `_tick()` — **one scheduler iteration per timer tick** (translation of `on_idle`, `meldapp.py:262-280`): first `if getattr(self._scheduler, "paused", False): self._timer.stop(); return` (§2.5 — the pump skips paused schedulers; `resume()`/`_on_runnable` restart it); then `ret = self._scheduler.iteration()`; if `isinstance(ret, str)` → `status_message.emit(ret)`; elif `type(ret) is float` → `progress_fraction.emit(ret)`; elif `ret` → `progress_pulse.emit()`; then if `not self._scheduler.tasks_pending()`: `self._timer.stop()`; `status_message.emit("")`; `progress_fraction.emit(0.0)`; `idle_changed.emit(True)`.
 - `_on_runnable`: if not paused and timer inactive → `self._timer.start()`; `idle_changed.emit(False)`.
-- `pause()/resume()`: docs that raise modal dialogs from inside scheduled generators MUST bracket `dialog.exec()` with `pump.pause()`/`pump.resume()` (contract for doc WPs; expose the main window's pump as `MeldWindow.pump`).
+- `pause()/resume()`: pump-internal helpers (stop timer / restart iff pending). Docs that raise modal dialogs from inside scheduled generators set `self.scheduler.paused = True/False` around `exec()` per §2.5 — `_tick` honors the flag (above), so no pump handle is needed inside docs; the pump stays exposed as `MeldWindow.pump` for the shell's own use.
 
 **Design change vs 1.4 (contract-mandated):** 1.4 kept one global `LifoScheduler` into which every doc's `FifoScheduler` was chained (`meldapp.py:211, 317, 489`), so background tabs kept working. The new pump drives **only the current tab's scheduler**; background tabs' tasks freeze until re-selected. `MeldWindow._on_current_tab_changed` calls `pump.set_scheduler(doc.scheduler)`. The one 1.4 code path that ran a scheduler with no tab — `_single_file_open`, `meldapp.py:625-633` — gets a **transient private `SchedulerPump`** created in that method and torn down via its `idle_changed(True)`.
 
@@ -1192,7 +1200,7 @@ Old refs: `meld/meldapp.py:125-260, 287-299, 335-477`, `data/ui/meldapp.glade:5-
 8. **Geometry debounce** (fixes `meldapp.py:335-337` writing prefs on every `size_allocate`): `self._geometry_save_timer = QTimer(self)` single-shot, 500 ms, timeout → `prefs.window_size_x = self.width(); prefs.window_size_y = self.height()`. Override `resizeEvent` to call `super()` then `self._geometry_save_timer.start()` (restart-on-each-event = trailing-edge debounce).
 9. **DnD** (`meldapp.py:200-205,228-232`): `setAcceptDrops(True)`; `dragEnterEvent`: `acceptProposedAction()` iff `mimeData().hasUrls()`; `dropEvent`: `paths=[u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]`; `self.open_paths(paths)`.
 10. **Focus forwarding** (`meldapp.py:217-226`): override `changeEvent`; on `QEvent.Type.ActivationChange` call `doc.on_focus_change()` for every open doc.
-11. **Slots** (translate `meldapp.py:342-462` one-to-one; every `current_doc().x()` dispatch keeps its name): `on_menu_file_new_activate` (opens `NewComparisonDialog` — stub `QMessageBox.information` until T3.8), save/save_as/close/quit, undo/redo/refresh/reload/find/find_next/replace, cut/copy/paste (clipboard dispatch: `w = self.focusWidget()`; call `w.cut()/copy()/paste()` if the attribute exists and is callable — covers QLineEdit, QPlainTextEdit, QComboBox.lineEdit; `meldapp.py:395-414`), preferences (stub until the prefs-dialog WP: open a `QMessageBox.information(self, "Meld", "Preferences dialog not ported yet")`), fullscreen (`isFullScreen()` ? `showNormal()` : `showFullScreen()`; `meldapp.py:422-427`), toolbar/statusbar toggles writing prefs (`meldapp.py:429-433`), help → `QDesktopServices.openUrl(QUrl(conf.HELP_URL))`, bug → `conf.BUG_REPORT_URL`, `on_menu_edit_down_activate`/`up` → `current_doc().next_diff(NavDirection.DOWN/UP)`, stop → `current_doc().stop()`.
+11. **Slots** (translate `meldapp.py:342-462` one-to-one; every `current_doc().x()` dispatch keeps its name): `on_menu_file_new_activate` (opens `NewComparisonDialog` — stub `QMessageBox.information` until T3.8), save/save_as/close/quit, undo/redo/refresh/reload/find/find_next/replace, cut/copy/paste (clipboard dispatch: `w = self.focusWidget()`; call `w.cut()/copy()/paste()` if the attribute exists and is callable — covers QLineEdit, QPlainTextEdit, QComboBox.lineEdit; `meldapp.py:395-414`), preferences (stub until the prefs-dialog WP: open a `QMessageBox.information(self, "Meld", "Preferences dialog not ported yet")`), fullscreen (`isFullScreen()` ? `showNormal()` : `showFullScreen()`; `meldapp.py:422-427`), toolbar/statusbar toggles writing prefs (`meldapp.py:429-433`), help → `QDesktopServices.openUrl(QUrl(conf.HELP_URL))`, bug → `conf.BUG_REPORT_URL`, `on_menu_edit_down_activate`/`up` → `current_doc().next_diff(Direction.DOWN/UP)`, stop → `current_doc().stop()`.
 12. **About** (`meldapp.py:444-450`, `meldapp.glade:71-97`): `show_about()` uses `QMessageBox.about(self, _("About Meld"), html)` with program name Meld, `meldq.__version__`, `_("Copyright © 2002-2009 Stephen Kennedy")`, and an `<a href="http://meld.sourceforge.net/">` link (QMessageBox labels open external links natively — the `gtk.about_dialog_set_url_hook` machinery dies).
 13. **Quit protocol** (`meldapp.py:298-299,357-369,464-477`): `closeEvent(event)` runs the right-to-left loop: `for i in range(self.tabs.count()-1, -1, -1)` (comment from `meldapp.py:358-359`: a VC page in the far-left tab must close last), `self.tabs.setCurrentIndex(i)`, `resp = self.try_remove_page(doc, appquit=True)`; on `CloseResponse.CANCEL` → `event.ignore(); return`. Then `on_quit_event()` on any remaining docs, flush the geometry timer (write immediately if active), `event.accept()`.
 14. **current_doc** (`meldapp.py:559-566`): returns the mapped doc for `tabs.currentWidget()` or the module-level `_DummyDoc` instance (`__getattr__` returning `lambda *a, **k: None` — keeps every menu handler safe with zero tabs, exactly like 1.4).
@@ -1238,7 +1246,7 @@ class DocActionManager(QObject):
 ```
 
 - Clearing: for each menu key, walk `menu.actions()` from the action after `doc_section_start_<key>` up to (exclusive) `doc_section_end_<key>` and `menu.removeAction(a)` each. `removeAction` does not destroy the QAction — actions stay parented to the doc's widget (`doc_actions()` contract) and simply become inert (their shortcuts stop firing), which implements "shortcuts active window-wide while the doc is current" with zero extra code. Same walk for the toolbar between `doc_toolbar_start`/`doc_toolbar_end`.
-- Populating: `menu.insertActions(end_separator, contributions.get(key, []))`; both boundary separators `setVisible(bool(section))`. Toolbar: `toolbar.insertActions(end_sep, doc.toolbar_contributions())`, separators likewise.
+- Populating: `section = contributions.get(key, [])`; first map each `None` entry to a fresh `QAction` with `setSeparator(True)` (parented to the menu) — §2.4's `None`-=-separator convention (`insertActions` would crash on a raw `None`); then `menu.insertActions(end_separator, section)`; both boundary separators `setVisible(bool(section))`. Toolbar: `toolbar.insertActions(end_sep, doc.toolbar_contributions())` (same `None` mapping), separators likewise.
 - `set_doc(None)` = clear only.
 - Debug guard: assert no contributed action's `shortcut()` collides with a shell action's shortcut (catches a doc re-binding Ctrl+Z etc. at develop time).
 
@@ -1246,7 +1254,7 @@ class DocActionManager(QObject):
 
 - `self._doc_for_widget: dict[QWidget, MeldDoc]` and `self._current_doc: MeldDoc | None` (Qt's `currentChanged(int)` gives no old index — track it; replaces `notebook.get_current_page()` juggling at `meldapp.py:304-307`).
 - `_append_page(doc, icon_name)` (`meldapp.py:485-493`): register `self._doc_for_widget[doc.widget] = doc` **before** `self.tabs.addTab(doc.widget, QIcon.fromTheme(icon_name), doc.label_text)`; `setCurrentWidget`; connect `doc.label_changed → self.on_label_changed` (partial-bound with doc), `doc.file_changed → self.on_file_changed_broadcast`, `doc.create_diff → self.append_diff`, `doc.status_changed → self.set_doc_status`.
-- `_on_current_tab_changed(index)` (translation of `on_switch_page`, `meldapp.py:301-317`): if there was a previous doc, disconnect its `next_diff_changed`, `undosequence.can_undo_changed/can_redo_changed` (wrap disconnects in `try/except TypeError`); if `index < 0`: `dam.set_doc(None)`, `pump.set_scheduler(None)`, title `"Meld"`, disable undo/redo/prev/next, return. Else resolve `doc`; `action_undo.setEnabled(doc.undosequence.can_undo())`, same for redo (`meldapp.py:309-310`); connect `doc.undosequence.can_undo_changed → action_undo.setEnabled` (and redo; `meldapp.py:325-329, 513-514`); connect `doc.next_diff_changed → self._on_next_diff_changed` (`meldapp.py:315-316, 331-333` — sets prev/next enabled); `setWindowTitle(f"{tab_text} - Meld")` (`meldapp.py:311-312`); `set_doc_status("")`; `dam.set_doc(doc)`; `pump.set_scheduler(doc.scheduler)`.
+- `_on_current_tab_changed(index)` (translation of `on_switch_page`, `meldapp.py:301-317`): if there was a previous doc, disconnect its `next_diff_changed`, `undosequence.can_undo_changed/can_redo_changed` (wrap disconnects in `try/except TypeError`); if `index < 0`: `dam.set_doc(None)`, `pump.set_scheduler(None)`, title `"Meld"`, disable undo/redo/prev/next, return. Else resolve `doc`; `action_undo.setEnabled(doc.undosequence.can_undo())`, same for redo (`meldapp.py:309-310`); connect `doc.undosequence.can_undo_changed → action_undo.setEnabled` (and redo; `meldapp.py:325-329, 513-514`); connect `doc.next_diff_changed → self._on_next_diff_changed` (`meldapp.py:315-316, 331-333` — sets prev/next enabled); `setWindowTitle(f"{tab_text} - Meld")` (`meldapp.py:311-312`); `set_doc_status("")`; `dam.set_doc(doc)`; `pump.set_scheduler(doc.scheduler)`. Finally call `doc.on_container_switch_in_event()`; on the previous doc (if any) call `on_container_switch_out_event()` before its disconnects — both are the no-arg activation hooks T3.4 adds (default `pass`; WP5/WP6 override them for focus/status refresh).
 - `on_label_changed(doc, text)` (`meldapp.py:319-323`): `tabs.setTabText(index_of(doc), text)`; if current, retitle window. (`child_set_property "menu-label"` at `:323` has no QTabWidget equivalent — use `setTabToolTip` instead.)
 - `try_remove_page(doc, appquit=False) -> CloseResponse` (`meldapp.py:464-477`): `resp = doc.on_delete_event(appquit)`; if `resp != CloseResponse.CANCEL`: if doc is current → `dam.set_doc(None)`, `pump.set_scheduler(None)`; `tabs.removeTab(idx)`; `del self._doc_for_widget[doc.widget]`; `doc.closed.emit()`; if `tabs.count() == 0`: title `"Meld"`. Return resp.
 - `_on_tab_close_requested(index)` → `try_remove_page(doc_at(index))`.
@@ -1284,7 +1292,7 @@ TRAPS:
 
 Old refs: `meld/meldapp.py:58-94`, `data/ui/meldapp.glade:98-491`.
 
-Consumed widget API (`meldq/widgets/historycombo.py:FileHistoryCombo`): constructor `FileHistoryCombo(parent=None)`; `set_history_id(str)` (QSettings key `history/<id>`), `set_directory_mode(bool)`, `get_full_path() -> str`, `prepend_history(str)`, `focus_entry()`, and an `activated` submit signal (Enter in the line edit).
+Consumed widget API (`meldq/widgets/historycombo.py:FileHistoryCombo`): constructor `FileHistoryCombo(parent=None)`; `set_history_id(str)` (QSettings key `history/<id>`), `set_directory_entry(bool)`, `get_full_path() -> str`, `prepend_history(str)`, `focus_entry()`, and an `activated` submit signal (Enter in the line edit).
 
 Create `meldq/ui/newcomparison.ui` (Qt Designer XML, loaded with `PyQt6.uic.loadUi`): QDialog `newdialog`, windowTitle `Choose Files` (set again from code as `_("Choose Files")` — `meldapp.glade:100`); QTabWidget `notebook` with three tabs; QDialogButtonBox `buttonbox` (Cancel + Ok, Ok default — `meldapp.glade:459-482`). Widget objectNames preserved from glade for mechanical porting: tab 1 (`_File Comparison`, `meldapp.glade:243`): `three_way_compare0` checkbox (`_Three Way Compare`, glade:128-135), rows `fileentry0` (label `Other`, glade:229, initially disabled — glade:177), `fileentry1` (`Original`, glade:212), `fileentry2` (`Mine`, glade:195); tab 2 (`_Directory Comparison`, glade:387): `three_way_compare1`, `direntry0/1/2` (labels Other/Original/Mine, glade:336-370, directory mode — `int1=1` at glade:286,303,321); tab 3 (`_Version Control Browser`, glade:440): `vcentry0` (label `Directory`, glade:425, directory mode). All seven entries are `FileHistoryCombo` via Designer **widget promotion** (promoted class `FileHistoryCombo`, header `meldq.widgets.historycombo`). Tab titles and labels set from code with `conf.mnemonic(_(msgid))` so the exact glade msgids hit the catalogs.
 
@@ -1406,14 +1414,14 @@ TRAPS:
 **Consumed** (must exist, from other WPs):
 - `meldq.engine.task`: `FifoScheduler`/`LifoScheduler` — pure Python, `runnable_cb` attribute (callable | None, invoked as `runnable_cb(scheduler)` from `add_task`), `iteration()`, `tasks_pending()`, `add_task()`, `remove_task()`; generator tasks follow the yield-None protocol.
 - `meldq.engine.undo.UndoSequence(QObject)`: `can_undo_changed(bool)`, `can_redo_changed(bool)` signals; `can_undo()`, `can_redo()`, `clear()`.
-- `meldq.widgets.historycombo.FileHistoryCombo` (T3.8 only): `set_history_id`, `set_directory_mode`, `get_full_path`, `prepend_history`, `focus_entry`, `activated` signal; persists under `history/<id>`.
+- `meldq.widgets.historycombo.FileHistoryCombo` (T3.8 only): `set_history_id`, `set_directory_entry`, `get_full_path`, `prepend_history`, `focus_entry`, `activated` signal; persists under `history/<id>`.
 - `meldq.util.misc.shell_escape` (lazy, with fallback) and `meldq.vc.get_plugins_metadata` (lazy, with fallback) for the filters default.
 - Editor WP: `DiffTextEdit.keyPressEvent` swallows Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y (window-level undo routing).
 
 **Provided** (every doc WP codes against these):
-- `meldq.doc`: `MeldDoc(QObject)` with contract signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()` plus extensions `file_changed(str)`, `next_diff_changed(bool,bool)`, `current_diff_changed()`; `CloseResponse` IntEnum; `NavDirection`; `RESULT_OK/RESULT_ERROR`; `doc_actions()/menu_contributions()/toolbar_contributions()` defaulting to empty; `self.widget`, `self.scheduler`, `self.undosequence`, `self.prefs`, `self.label_text`, `self.num_panes`; overridables `save/save_as/stop/next_diff/on_find_activate/.../on_delete_event/on_quit_event/on_focus_change/on_preference_changed(key)`.
+- `meldq.doc`: `MeldDoc(QObject)` with contract signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()` plus extensions `file_changed(str)`, `next_diff_changed(bool,bool)`, `current_diff_changed()`; `CloseResponse` IntEnum; `Direction`; `RESULT_OK/RESULT_ERROR`; `doc_actions()/menu_contributions()/toolbar_contributions()` defaulting to empty; `self.widget`, `self.scheduler`, `self.undosequence`, `self.prefs`, `self.label_text`, `self.num_panes`; overridables `save/save_as/stop/next_diff/on_find_activate/.../on_delete_event/on_quit_event/on_focus_change/on_preference_changed(key)/on_container_switch_in_event/on_container_switch_out_event` (the last two are no-arg tab-activation hooks called by `_on_current_tab_changed`).
 - `meldq.app.DocActionManager` placeholder semantics (menu keys `"file","edit","changes","view"`; submenus contributed as `QMenu.menuAction()`; actions parented to doc widget; shortcuts live only while current).
-- `meldq.app.SchedulerPump` with `pause()/resume()` (docs must bracket modal `exec()` while their generators run); `MeldWindow.pump` exposed.
+- `meldq.app.SchedulerPump` honoring the §2.5 `scheduler.paused` flag (docs set it around modal `exec()` from generator frames; `pause()/resume()` are pump-internal helpers); `MeldWindow.pump` exposed.
 - `meldq.app.MeldWindow`: `append_filediff/append_dirdiff/append_vcview/append_diff/open_paths/try_remove_page/current_doc/set_doc_status/set_task_status`; window-quit right-to-left close protocol via `on_delete_event(appquit)`.
 - `meldq.util.prefs.Preferences`: attribute access, `changed(str)` signal, `get_default`, `get_current_font() -> QFont`, `get_custom_editor_command`, full schema incl. hex `color_*` values (doc WPs feed them straight to `QColor`); QSettings key namespace `prefs/`, `history/`, `migration/`.
 - `meldq.conf`: `_`, `ngettext`, `mnemonic`, `init_i18n`, `ui_file`, `icon_path`, `locale_dir`, `running_from_source`, `HELP_URL`, `BUG_REPORT_URL`.
@@ -1441,7 +1449,7 @@ TRAPS:
 1. `python -c "import meldq.conf, sys; sys.exit(1 if 'PyQt6' in sys.modules else 0)"` exits 0 (conf is Qt-free).
 2. `python -W error -c "import meldq.util.prefs, meldq.doc, meldq.app, meldq.main"` exits 0 under Python 3.11 (no invalid-escape or deprecation warnings at import; app imports without any doc module present).
 3. `QT_QPA_PLATFORM=offscreen python -m pytest tests/test_conf.py tests/test_prefs.py tests/test_prefs_migration.py tests/test_doc.py tests/test_scheduler_pump.py tests/test_app_shell.py tests/test_action_manager.py tests/test_newcomparison.py tests/test_cli.py -q` — all green.
-4. `meldq --version` prints `meldq 2.0.0a0` and exits 0; `meldq --diff a` with a missing follow-up count (e.g. `meldq --diff a b c d e`) exits 2 printing the 1.4 error string.
+4. `meldq --version` prints `meldq 2.0.0a0` and exits 0; `meldq --diff` (empty group) and `meldq --diff a b c d e` (5-path group) exit 2 printing the 1.4 error string; `meldq --diff a` (1-path group) is accepted per T3.9's `(1,2,3,4)` validation.
 5. Manual launch `meldq` (Linux/macOS): window titled "Meld" appears sized 600×600 on first run; menubar shows File/Edit/Changes/View/Help; toolbar shows New/Prev/Next/Stop; statusbar with progressbar; hovering "New..." shows "Start a new comparison" in the statusbar; Stop is greyed out; F11 toggles fullscreen; View→Statusbar hides the statusbar and the setting survives restart.
 6. Manual: Ctrl+N opens the modeless "Choose Files" dialog with tabs File Comparison / Directory Comparison / Version Control Browser; the first file entry is disabled until "Three Way Compare" is checked; Cancel closes; with doc WPs absent, OK produces the "not available yet" warning instead of crashing.
 7. Migration: with a `~/.meld/meldrc.ini` fixture containing `color_delete_bg = DarkSeaGreen1`, `custom_font = Monospace 12`, `edit_command_type = gnome`, first launch writes `prefs/color_delete_bg=#c1ffc1`, a `QFont.fromString`-parsable `custom_font`, `edit_command_type=internal`, and `migration/meldrc_done=true` into `~/.config/meldq/meldq.ini`; second launch does not re-run migration (verified by test 3's migration suite; manually by deleting the old ini between runs).
@@ -1465,7 +1473,7 @@ Build the four shared widgets in `meldq/widgets/` — `HistoryCombo`/`FileHistor
 ### Dependencies
 
 - **WP0** (package skeleton: `meldq/` package with `conf.py` exposing `_`, `meldq/util/misc.py` stub + its no-Qt-import purity test, `pyproject.toml` with PyQt6 dep, `tests/` with pytest + pytest-qt configured). WP4 cannot start before WP0.
-- **No dependency** on WP2 (engine) or WP3 (shell) — WP4 can run in parallel with them. WP3's new-comparison dialog consumes `FileHistoryCombo`, so if WP3 is in flight simultaneously, land T4.4/T4.5 early.
+- **No dependency** on WP2 (engine) or WP3 (shell) — WP4 can run in parallel with them. WP3's deferred T3.8 (new-comparison dialog) consumes `FileHistoryCombo` and runs immediately after this WP's T4.5 — land T4.4/T4.5 early.
 - Consumed by: WP3 (app shell: `FileHistoryCombo` in new-comparison dialog), WP5 (dirdiff: `DiffTreeModel`, `FileHistoryCombo`), WP6 (filediff: `MsgArea*`, `FindBar`, `FileHistoryCombo`, utf-16 helpers), WP7 (vcview: `DiffTreeModel`, `FileHistoryCombo`, `HistoryCombo`).
 
 ### Old-code map
@@ -1686,6 +1694,7 @@ class HistoryCombo(QComboBox):
     def set_history_length(self, n: int) -> None   # :135-140 (ignore n <= 0)
     def get_history_length(self) -> int
     def clear_history(self) -> None                # :130-133 (clear items + save)
+    def set_history_id(self, history_id: str) -> None  # re-key + _load_history(); Designer-promotion support (T3.8/T7.12 construct with the default ctor)
     def _settings_key(self) -> str | None          # f"history/{self._history_id}" or None
     def _save_history(self) -> None
     def _load_history(self) -> None
@@ -1752,6 +1761,7 @@ class FileHistoryCombo(QWidget):
     def prepend_history(self, text: str) -> None   # :302-303 → combo.prepend_text
     def focus_entry(self) -> None                  # :305-306 → combo.lineEdit().setFocus()
     def set_default_path(self, path: str | None)   # :308-312 (abspath or None)
+    def set_history_id(self, history_id: str)      # forwards to self.combo.set_history_id (promotion support)
     def set_directory_entry(self, is_dir: bool)    # fixed: writes THE attribute the
     def get_directory_entry(self) -> bool          #   browse handler reads (see TRAPS)
     def _browse_clicked(self) -> None
@@ -1931,7 +1941,7 @@ Tests in `tests/test_findbar.py` (fixture: `FindBar` + bare `QPlainTextEdit` wit
 - `test_replace_all_single_undo`: text `"a b a b a"`, find `a`, replace `X` → `"X b X b X"`; ONE `edit.undo()` restores the original text (edit-block grouping regression; also validates the WP-undo contract, since one edit block == one `undoCommandAdded`).
 - `test_replace_all_terminates_when_replacement_contains_pattern`: text `"aaa"`, find `a`, replace `aa` → result `"aaaaaa"` and the call RETURNS (guarded by a 5-second pytest timeout marker) — regression for the 1.4 infinite loop.
 - `test_replace_all_zero_length_pattern_terminates`: regex `x*` on `"ab"` terminates.
-- `test_astral_offaccording_offsets`: text `"😀😀 target"`, find `target` → the SELECTED text (`textCursor().selectedText()`) equals `"target"` (fails without the UTF-16 conversion because each emoji shifts positions by one).
+- `test_astral_offsets`: text `"😀😀 target"`, find `target` → the SELECTED text (`textCursor().selectedText()`) equals `"target"` (fails without the UTF-16 conversion because each emoji shifts positions by one).
 
 TRAPS:
 - `findbar.py:110-111` `.decode("utf-8")` on entry/buffer text: in py3 this is `AttributeError: 'str' object has no attribute 'decode'` — DELETE both, do not "port" to `.encode().decode()`.
@@ -1955,7 +1965,7 @@ TRAPS:
 
 **Provided (frozen for WP3/WP5/WP6/WP7):**
 - `meldq.widgets.treemodel`: `STATE_IGNORED..STATE_MAX` (= `range(12)`, canonical for the UI layer — the vc WP must import or match), `ROLE_PATH/ROLE_STATE/ROLE_ISDIR` (`UserRole+1/2/3`), `TextStyle`, `DEFAULT_TEXT_STYLES`, `state_icons()`, `DiffTreeModel(ntree=3, extra_cols=0)` with `add_entries/add_empty/add_error/value_path/value_paths/set_state/get_state/rowpath/index_for_rowpath/inorder_search_down/inorder_search_up` and role-computed Foreground/Background/Font/Decoration in `data()`. `self.text_styles` is per-instance and override-safe (vcview). Extra columns are plain DisplayRole text columns after the pane columns (vcview's Location/Status/Rev/Tag/Options).
-- `meldq.widgets.historycombo`: `HistoryCombo(history_id, settings=None)` (`prepend_text`, `set_history_length/get_history_length`, `clear_history`, `currentText()` inherited), `FileHistoryCombo(history_id, browse_dialog_title=None, directory_entry=False, default_path="~", settings=None)` (`activated = pyqtSignal()`, `get_full_path`, `set_filename`, `prepend_history`, `focus_entry`, `set_default_path`, `set/get_directory_entry`, public `.combo`), `_expand_filename`. Stable QSettings keys `history/<id>` for ids: `file_comparison`, `dir_comparison`, `vc_directory`, `direntry`, `fileentry`, `previousentry`.
+- `meldq.widgets.historycombo`: `HistoryCombo(history_id, settings=None)` (`prepend_text`, `set_history_id`, `set_history_length/get_history_length`, `clear_history`, `currentText()` inherited), `FileHistoryCombo(history_id, browse_dialog_title=None, directory_entry=False, default_path="~", settings=None)` (`activated = pyqtSignal()`, `get_full_path`, `set_filename`, `prepend_history`, `focus_entry`, `set_default_path`, `set_history_id`, `set/get_directory_entry`, public `.combo`), `_expand_filename`. Stable QSettings keys `history/<id>` for ids: `file_comparison`, `dir_comparison`, `vc_directory`, `direntry`, `fileentry`, `previousentry`.
 - `meldq.widgets.msgarea`: `ResponseId` IntEnum (GTK values), `MsgArea` (`response = pyqtSignal(int)`, `add_button`, `add_stock_button_with_text`, `set_text_and_icon`, `set_response_sensitive`, `set_default_response`, `button_for_response`), `MsgAreaController` (`has_message`, `get_msg_id/set_msg_id`, `clear`, `new_from_text_and_icon`), `_themed_icon` helper.
 - `meldq.widgets.findbar`: `FindBar` (`text_edit` attr, `hide`, `start_find`, `start_find_next`, `start_replace`, `_find_text`) operating on any `QPlainTextEdit`. WP6 owns embedding, shortcuts, focus retargeting, Escape handling.
 - `meldq.util.misc`: `gtk_mnemonic_to_qt`, `char_to_utf16_offset`, `utf16_to_char_offset` (WP6 reuses the offset pair for inline highlights).
@@ -2009,8 +2019,8 @@ Port Meld 1.4.0's directory comparison — `meld/dirdiff.py` (1043 LOC) plus the
 
 ### Dependencies
 
-- **WP2** (engine port): `meldq/engine/task.py` (`FifoScheduler` with `add_task(callable)`, `tasks_pending()`, `iteration()`, `remove_all_tasks()`, and the `runnable_cb` callback attribute), `meldq/util/misc.py` (pure helpers: `shorten_names`, `shell_to_regex`, `copy2`, `copytree`, `all_equal`), `meldq/conf.py` (`_`, `ngettext`, resource paths).
-- **WP3** (shell & infrastructure): `meldq/doc.py` `MeldDoc(QObject)` with the four normative signals; `meldq/app.py` `MeldWindow` + `DocActionManager` + `SchedulerPump`; `meldq/util/prefs.py` `Preferences(QObject)` with `changed = pyqtSignal(str)` and keys `regexes`, `filters`, `ignore_symlinks`, `color_delete_bg`, `color_replace_bg`; `meldq/widgets/historycombo.py` `FileHistoryCombo`.
+- **WP2** (engine port): `meldq/engine/task.py` (`FifoScheduler` with `add_task(task, atfront=False)`, `tasks_pending()`, `iteration()`, `remove_all_tasks()`, and the `runnable_cb` callback attribute), `meldq/util/misc.py` (pure helpers: `shorten_names`, `shell_to_regex`, `copy2`, `copytree`, `all_equal`); `meldq/conf.py` (`_`, `ngettext`, resource paths — provided by WP0/WP3, not WP2).
+- **WP3** (shell & infrastructure): `meldq/doc.py` `MeldDoc(QObject)` with the four normative signals; `meldq/app.py` `MeldWindow` + `DocActionManager` + `SchedulerPump`; `meldq/util/prefs.py` `Preferences(QObject)` with `changed = pyqtSignal(str)` and keys `regexes`, `filters`, `ignore_symlinks`, `color_delete_bg`, `color_replace_bg`; `meldq/widgets/historycombo.py` `FileHistoryCombo` (provided by WP4).
 - Does **NOT** depend on the filediff WPs. `meldq/diffmap.py` is created here if the filediff WP has not landed it yet (see T5.9 and Contracts provided).
 - Phase-0 spike S2 (3 views × 1 model × `setTreePosition`) must have passed — it did, per the plan; if you find no spike artifact, re-verify with a 20-line scratch script before T5.3.
 
@@ -2019,7 +2029,7 @@ Port Meld 1.4.0's directory comparison — `meld/dirdiff.py` (1043 LOC) plus the
 | Old file:lines | What it does | New home |
 |---|---|---|
 | `meld/tree.py:23` | `COL_PATH..COL_END` column constants | deleted — replaced by roles in `meldq/widgets/treemodel.py` |
-| `meld/tree.py:25-28` | STATE_* constants re-export from `vc/_vc.py:33-36` | `meldq/widgets/treemodel.py` re-exports from `meldq/vc/_vc.py` |
+| `meld/tree.py:25-28` | STATE_* constants re-export from `vc/_vc.py:33-36` | STATE_* module constants in `meldq/widgets/treemodel.py` (WP4 T4.2, canonical for the UI layer; `meldq/vc/_vc.py` imports or matches them in WP7 T7.2) |
 | `meld/tree.py:30-38` | module-import-time pixbuf loading of 8 tree icons | lazy `_icon_cache` in `meldq/widgets/treemodel.py` |
 | `meld/tree.py:40-46` | `DiffTreeStore(gtk.TreeStore)`, interleaved ntree×4 columns | `DiffTreeModel(QStandardItemModel)`, one column per pane |
 | `meld/tree.py:48-76` | Pango markup textstyle + pixstyle tables | `STATE_STYLE` dict → `data()` Foreground/Background/Font/Decoration |
@@ -2070,22 +2080,21 @@ Port Meld 1.4.0's directory comparison — `meld/dirdiff.py` (1043 LOC) plus the
 **Build:**
 
 1. Copy the 9 icons `data/icons/tree-{file,folder}-{normal,new,changed,missing}.png` + `data/icons/tree-file-newer.png` into `meldq/resources/icons/` (plain `git add` of copies; do not modify the old tree).
-2. Create `meldq/widgets/treemodel.py`:
+2. EXTEND the WP4-landed `meldq/widgets/treemodel.py` (T4.2/T4.3) — **do not recreate it**. WP4's
+   signatures are normative: `DiffTreeModel(ntree=3, extra_cols=0, parent=None)`, model-METHOD
+   `rowpath(index)`/`index_for_rowpath(path)`, `DEFAULT_TEXT_STYLES` + per-instance `text_styles`,
+   lazy `state_icons()`, and the STATE_* module constants (defined THERE — do NOT import them from
+   `meldq.vc._vc`, which only lands in WP7). Items 3–5 below re-state the landed design for
+   context: where they differ from WP4's landed code (free-function `rowpath`, `STATE_STYLE` dict,
+   `_icon(state, isdir, newer)` loader), adapt to WP4's API instead of recreating it; the genuine
+   additions of this task are `ROLE_NEWER`, `set_newer()`, and newer-emblem compositing in the
+   icon cache. Add new tests to the existing `tests/test_treemodel.py`.
 
 ```python
-from PyQt6.QtCore import Qt, QModelIndex
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QColor, QFont, QIcon, QPixmap, QPainter
-from meldq.vc._vc import (STATE_IGNORED, STATE_NONE, STATE_NORMAL, STATE_NOCHANGE,
-                          STATE_ERROR, STATE_EMPTY, STATE_NEW, STATE_MODIFIED,
-                          STATE_CONFLICT, STATE_REMOVED, STATE_MISSING, STATE_MAX)
-
-ROLE_PATH  = Qt.ItemDataRole.UserRole + 1   # str | None
-ROLE_STATE = Qt.ItemDataRole.UserRole + 2   # int STATE_*
-ROLE_ISDIR = Qt.ItemDataRole.UserRole + 3   # bool
 ROLE_NEWER = Qt.ItemDataRole.UserRole + 4   # bool, dirdiff "newer" emblem; default False
-
-def rowpath(index: QModelIndex) -> tuple[int, ...]: ...
-def index_for_rowpath(model, path: tuple[int, ...]) -> QModelIndex: ...
+# ROLE_PATH/ROLE_STATE/ROLE_ISDIR (UserRole + 1/2/3) already landed in WP4 T4.2.
+# Where this WP's text writes rowpath(idx) / index_for_rowpath(self.model, p), read the
+# WP4 model methods self.model.rowpath(idx) / self.model.index_for_rowpath(p).
 ```
 
 `rowpath` climbs `index.row()`/`index.parent()` producing e.g. `(0, 2, 1)`; `index_for_rowpath` walks `model.index(r, 0, parent)`. These are the *only* row-addressing currency — they replace GTK tree-path tuples verbatim, so `todo.sort()` (dirdiff.py:400) and the expansion-propagation prefix slicing (dirdiff.py:504-515) keep working unchanged.
@@ -2182,7 +2191,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 4. View configuration per view: `setHeaderHidden(True)`, `setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)`, `setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)`, `setUniformRowHeights(True)`, `setExpandsOnDoubleClick(False)` (see TRAPS), `setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)`, both scrollbar policies `ScrollBarAlwaysOn` (glade GTK_POLICY_ALWAYS). Per D12 the GTK left-side-scrollbar asymmetry on pane 0 (glade `GTK_CORNER_TOP_RIGHT`, dirdiff.glade:42-43) is **dropped** — all scrollbars on the right.
 5. `_set_model(model)` helper — the single place that attaches a model (needed because `set_num_panes`, like dirdiff.py:858, creates a **fresh** `DiffTreeModel(n)` on every pane-count change): for each of the first n views: `view.setModel(model)`; `view.setTreePosition(i)`; `for c in range(model.columnCount()): view.setColumnHidden(c, c != i)`; then **reconnect** `view.selectionModel().currentRowChanged` → `self.on_treeview_cursor_changed` (see TRAPS).
 6. `set_num_panes(n)` transliterating dirdiff.py:856-871: guard `n != self.num_panes and n in (1,2,3)`; new model; `_set_model`; then show/hide with **explicit loops** — the originals are `map(lambda x: x.show(), toshow)` / `map(... hide ...)` at dirdiff.py:863 and :866, which are **silent no-ops in py3** (map is lazy): a missed fix ships a dirdiff that never switches pane counts. Show `scrolledwindow`-equivalents (the views), `fileentry[:n]`, `linkmap[:n-1]`, `diffmap[:2 if n>1 else ...]` — follow the original slicing exactly: `toshow = views[:n] + fileentry[:n] + linkmap[:n-1] + diffmap[:n]`, `tohide = views[n:] + fileentry[n:] + linkmap[n-1:] + diffmap[n:]` (note `diffmap[:n]` — with n=1 only the left diffmap shows; preserve). Preserve the first-time-through branch (:867-871): only re-trigger `on_fileentry_activate(None)` when `num_panes` was already nonzero.
-7. `set_locations(locations)` (dirdiff.py:367-379): `set_num_panes(len(locations))`; `os.path.abspath(l or ".")`; model cleared implicitly by the fresh model or `model.removeRows`; `fileentry[pane].set_path(loc)` + prepend-history (use the actual `FileHistoryCombo` API from `meldq/widgets/historycombo.py` — check its method names, do not guess); `child = model.add_entries(None, locations)`; `self.treeview[0].setFocus()`; `self._update_item_state(child)`; `recompute_label()`; `self.scheduler.remove_all_tasks()`; `self.recursively_update((0,))`.
+7. `set_locations(locations)` (dirdiff.py:367-379): `set_num_panes(len(locations))`; `os.path.abspath(l or ".")`; model cleared implicitly by the fresh model or `model.removeRows`; `fileentry[pane].set_filename(loc)` + `prepend_history(loc)` (the WP4 T4.5 API); `child = model.add_entries(None, locations)`; `self.treeview[0].setFocus()`; `self._update_item_state(child)`; `recompute_label()`; `self.scheduler.remove_all_tasks()`; `self.recursively_update((0,))`.
 8. `on_fileentry_activate(self, *_)` — must accept zero meaningful args because `set_num_panes` calls it with `None` (dirdiff.py:869). Reads all pane paths, calls `set_locations`.
 9. `refresh()` (dirdiff.py:873-877) and `recompute_label()` (:879-884, `misc.shorten_names`, `" : ".join`, `self.label_changed.emit(self.label_text)` — MeldDoc signal, not the old method-emit combo at melddoc.py:106-107).
 
@@ -2217,7 +2226,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 8. Slot wiring for the six plain actions → the T5.8 operations (`launch_comparisons_on_selected`, `copy_selected(-1)`, `copy_selected(1)`, `delete_selected`, `on_filter_hide_current_clicked`, DirOpen → `_open_files` of selected, dirdiff.py:703-708).
 
 **TRAPS:**
-- The whole `on_container_switch_in_event`/`out_event` pair (dirdiff.py:263-283) and `ui_file` (:201) do **not** get ported — `DocActionManager` (WP3) repopulates placeholder sections on tab switch from the three contract methods. The one behavioral remnant to keep: on switch-in the old code re-grabbed focus and refreshed the status line via scheduled tasks (:275-277); reproduce by implementing the doc-activation hook WP2 provides (grep `meldq/app.py` for how docs are notified of activation; schedule `self.treeview_focussed.setFocus` and `self.on_treeview_cursor_changed` on it).
+- The whole `on_container_switch_in_event`/`out_event` pair (dirdiff.py:263-283) and `ui_file` (:201) do **not** get ported — `DocActionManager` (WP3) repopulates placeholder sections on tab switch from the three contract methods. The one behavioral remnant to keep: on switch-in the old code re-grabbed focus and refreshed the status line via scheduled tasks (:275-277); reproduce by overriding the no-arg doc-activation hook WP3 provides (`MeldDoc.on_container_switch_in_event`, called by `MeldWindow._on_current_tab_changed` — T3.4/T3.7; schedule `self.treeview_focussed.setFocus` and `self.on_treeview_cursor_changed` in it).
 - `action.props.is_important` loop (:207-210) and `misc.make_tool_button_widget` (:272-273) → nothing per-action; the shell sets `QToolBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)` — do not try to port these.
 - Mnemonic conversion: msgids must stay byte-identical to 1.4 (`"_Compare"`); convert `_`→`&` only on the *translated* result, and only the first underscore.
 - Lambdas with loop variables at :300 and :308 — default-arg binding is load-bearing twice.
@@ -2283,7 +2292,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
      ```
      (preserve the exact message construction from :433-434, including that the second operand is the bare name, not joined — string parity for the catalogs).
    - `get()` case-insensitive branch: `keys = sorted(self.items)` (the original `keys = self.items.keys(); keys.sort()` at :442-443 is an AttributeError on a py3 view); keep `fixup`/`first_nonempty` verbatim (:444-449).
-   - **Case-collision modal with pump pause** (:438-441): when `self.bad` is non-empty, the dialog fires from *inside the running generator*, and `QMessageBox.exec()` re-enters the event loop — the SchedulerPump timer fires, calls `scheduler.iteration()`, which calls `__next__` on the **already-executing** generator → `ValueError: generator already executing` → the scan dies. Wrap the dialog: `with self.pump_paused(): QMessageBox.warning(self.widget, "Meld", msg)` using the exact 1.4 text `_("You are running a case insensitive comparison on a case sensitive filesystem. Some files are not visible:\n%s") % "\n".join(self.bad)`. `pump_paused()` is the WP2 contract mechanism — check `meldq/doc.py`; if WP2 did not ship it, add to `MeldDoc` a contextmanager that calls `self.pump.pause()`/`self.pump.resume()` when `self.pump` (set by MeldWindow on doc insertion) is not None and no-ops otherwise (keeps headless tests running), and add matching `pause()`/`resume()` (stop timer / restart-if-pending) to `SchedulerPump`.
+   - **Case-collision modal with pump pause** (:438-441): when `self.bad` is non-empty, the dialog fires from *inside the running generator*, and `QMessageBox.exec()` re-enters the event loop — the SchedulerPump timer fires, calls `scheduler.iteration()`, which calls `__next__` on the **already-executing** generator → `ValueError: generator already executing` → the scan dies. Wrap the dialog per §2.5: `self.scheduler.paused = True` / `try/finally: self.scheduler.paused = False` around `QMessageBox.warning(self.widget, "Meld", msg)`, using the exact 1.4 text `_("You are running a case insensitive comparison on a case sensitive filesystem. Some files are not visible:\n%s") % "\n".join(self.bad)`. WP3's `SchedulerPump._tick` skips paused schedulers (headless tests need nothing extra); a small `pump_paused()` contextmanager on `MeldDoc` doing exactly that flag-flip is an acceptable convenience wrapper.
    - Directory listing loop (:452-489): `except OSError as err` (the `except OSError, err` comma syntax at :456/:467/:477 is a py3 SyntaxError — loud, but listed for completeness); `print("Ignoring OS error: %s" % err)` and `print("ignoring dangling symlink", e)` as py3 calls (:468/:478 are py2 print statements); name filters applied with a list comprehension per filter — `entries = [e for e in entries if f.filter(e)]` — the original `entries = filter(f.filter, entries)` reassigned in a loop (:460-461) stacks lazy filter objects in py3; it happens to still work (nested lazy filters) but breaks the `len()`-free contract subtly on re-iteration — make it a list. Symlink-once logic via `(st_dev, st_ino)` dict verbatim (:470-483).
    - **THE map-for-side-effect fix** (:500-501): `map(lambda x: todo.append(self.model.get_path(add_entry(x))), alldirs)` and `map(add_entry, allfiles)` are silent no-ops in py3 — **the scan would add zero rows to the model and the app would look "done" instantly with an empty tree**. Replace:
      ```python
@@ -2303,7 +2312,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 - `dirdiff.py:500-501` — map no-op: the single most dangerous silent break in the whole subsystem. Regression test AC4 exists specifically for it.
 - `dirdiff.py:390` — `.next` attribute: py3 `AttributeError` at first scan.
 - `dirdiff.py:427-436` — AssertionError-as-control-flow: breaks under `python -O` (asserts stripped → `existing[pane]` silently overwritten, collisions unreported). AC10 runs the scan suite under `-O`.
-- `dirdiff.py:439` — modal inside generator: generator-reentrancy `ValueError` under the Qt pump (GTK's recursive main loop tolerated it). Mandatory `pump_paused()`.
+- `dirdiff.py:439` — modal inside generator: generator-reentrancy `ValueError` under the Qt pump (GTK's recursive main loop tolerated it). Mandatory `scheduler.paused` bracketing (§2.5).
 - `dirdiff.py:442-443` — `keys()` view has no `.sort()` in py3.
 - `dirdiff.py:406` — the generator reads `IgnoreCase` action state mid-flight; new code reads `self.ignore_case` captured at class-selection time (the `accum` class is chosen once per outer loop iteration — actually per `while todo` iteration at :406; preserve per-iteration read of the attribute).
 - `dirdiff.py:398 vs :504-515` — `expanded` dict keys are tuples; if you "modernize" rowpath to QModelIndex here the prefix-slicing propagation breaks. Tuples are load-bearing.
@@ -2350,8 +2359,8 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 3. `copy_selected(direction)` (:537-569): assert direction in (-1, 1); pane from `_get_focused_pane()`; `sel = self._get_selected_paths(src_pane)` (already sorted); iterate `reversed(sel)`; for each `QPersistentModelIndex` p: `if not p.isValid(): continue`; `it = QModelIndex(p)`; `src/dst = model.value_path(it, src/dst_pane)`; keep the `if name is None: continue` guard (:549); file branch: `os.makedirs(dstdir, exist_ok=True)` + `misc.copy2` + `self.file_created(p, dst_pane)`; dir branch: overwrite confirm via `QMessageBox.question(self.widget, "Meld", _("'%s' exists.\nOverwrite?") % os.path.basename(dst), StandardButton.Ok | StandardButton.Cancel)` — Ok proceeds (`misc.copytree`) then `self.recursively_update(rowpath(QModelIndex(p)))`; `except (OSError, IOError) as e` → `QMessageBox.warning` with `_("Error copying '%s' to '%s'\n\n%s.") % (src, dst, e)` (:568-569).
 4. `delete_selected()` (:571-594): same persistent-index reverse-iteration; file → `os.remove` + `file_deleted(p, pane)`; dir → confirm `_("'%s' is a directory.\nRemove recursively?") % basename`; on Ok `shutil.rmtree` + `recursively_update(rowpath(...))`; **`file_deleted(p, pane)` is called even when the user cancels** (:592 sits outside the Ok-branch) — preserve this quirk (it harmlessly re-checks existence and refreshes state); `except OSError as e` → `_("Error removing %s\n\n%s.") % (name, e)`.
 5. `on_filter_hide_current_clicked` (:738-744): selected persistent indexes, iterate `reversed(sorted-by-rowpath)`, `self.model.removeRow(QModelIndex(p).row(), QModelIndex(p).parent())`. QPersistentModelIndex keeps later entries valid as earlier siblings vanish — this plus reverse order is the double protection replacing GTK's reverse-tuple discipline (:742-744).
-6. DirOpen (:703-708): paths of selection → `self._open_files(files)` — MeldDoc method (melddoc.py:63-79); verify WP3 ported it (xdg-open/open dispatch); if the custom/gnome editor-command pref branch was descoped by WP2, fall back to `QDesktopServices.openUrl`.
-7. `next_diff(direction)` (:1025-1039): `direction` is the app-wide neutral enum replacing `gtk.gdk.SCROLL_UP` (:1032) — grep `meldq/doc.py`/`meldq/app.py` for the existing token (filediff WPs share it); if absent define `class Direction(enum.Enum): UP; DOWN` in `meldq/doc.py`. Start index: last of `_get_selected_paths(pane)` or the root row `(0,)` (:1030). Walk `model.inorder_search_up/down`; first row whose `get_state(it, pane)` not in `(STATE_NORMAL, STATE_EMPTY)` (:1034-1035): expand ancestors (`while parent valid: view.expand(parent)` — the `expand_to_path` replacement, :1037), `view.setCurrentIndex(cur)`, `view.scrollTo(cur)`.
+6. DirOpen (:703-708): paths of selection → `self._open_files(files)` — MeldDoc method (melddoc.py:63-79); verify WP3 ported it (xdg-open/open dispatch); if the custom/gnome editor-command pref branch was descoped by WP3, fall back to `QDesktopServices.openUrl`.
+7. `next_diff(direction)` (:1025-1039): `direction` is the app-wide neutral enum replacing `gtk.gdk.SCROLL_UP` (:1032) — import `Direction` from `meldq.doc` (created in WP3 T3.4; do not redefine). Start index: last of `_get_selected_paths(pane)` or the root row `(0,)` (:1030). Walk `model.inorder_search_up/down`; first row whose `get_state(it, pane)` not in `(STATE_NORMAL, STATE_EMPTY)` (:1034-1035): expand ancestors (`while parent valid: view.expand(parent)` — the `expand_to_path` replacement, :1037), `view.setCurrentIndex(cur)`, `view.scrollTo(cur)`.
 8. `on_reload_activate` → `on_fileentry_activate(None)` (:1041-1042); wire to the shell's refresh action per the doc contract.
 
 **TRAPS:**
@@ -2384,7 +2393,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 4. Wire in `_set_model`/`set_num_panes`: `self.diffmap[0].setup(self.treeview[0].verticalScrollBar(), lambda: self._diffmap_chunks(0))`, `self.diffmap[1].setup(self.treeview[self.num_panes-1].verticalScrollBar(), ...)` — note diffmap 1 tracks the **last visible** pane (:892, :976), so re-setup on every pane-count change. `_update_diffmaps()` → `self.diffmap[0].update(); self.diffmap[1].update()` (:886-888) — called from expansion changes, `file_created/deleted`, and scan completion.
 
 **TRAPS:**
-- `dirdiff.py:928/:930` — `gdk.color_parse(self.prefs.color_delete_bg)`: 1.4 prefs store X11 color names (D9 flags e.g. `DarkSeaGreen1`) that `QColor(name)` does NOT parse — check `QColor.isValid()` and fall back to a hardcoded equivalent (`#c8e6c8`-ish for delete-bg, per WP2's prefs conversion table if it exists; grep `meldq/util/prefs.py` first).
+- `dirdiff.py:928/:930` — `gdk.color_parse(self.prefs.color_delete_bg)`: 1.4 prefs store X11 color names (D9 flags e.g. `DarkSeaGreen1`) that `QColor(name)` does NOT parse — check `QColor.isValid()` and fall back to a hardcoded equivalent (`#c8e6c8`-ish for delete-bg, per WP3's prefs conversion table (T3.3); grep `meldq/util/prefs.py` first).
 - `dirdiff.py:952-978` — the arrow-offset geometry: transliterating the `14`s misplaces every chunk and click on Qt; deleting them is the fix, not translating (`QStyle.pixelMetric(PM_ScrollBarExtent)` is only needed if pixel-parity with a stepper theme is demanded — it is not).
 - `numlines` can be 0 for a root-only tree → division by zero in the fraction conversion; the original divides by `numlines` at :953 with the same latent risk (single-row tree) — guard `numlines <= 0` → empty chunk list.
 - Chunk traversal must use `isExpanded` on the SAME view the diffmap mirrors; expansion is synced, but during the sync window they can differ for one event — harmless, but always read one view, never mix.
@@ -2399,7 +2408,7 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 **Build:**
 
 1. Register DirDiff with the shell's new-comparison dialog / CLI path: `meldq` invoked with two or three directory arguments must construct `DirDiff(prefs, n)` and call `set_locations(list_of_dirs)` (grep `meldq/main.py`/`meldq/app.py` for how FileDiff docs are constructed and mirror it).
-2. Doc-activation hook (replacing :275-277): on tab switch-in, schedule `treeview_focussed.setFocus` and `on_treeview_cursor_changed` on the doc's scheduler so toolbar/status state is fresh.
+2. Doc-activation hook (replacing :275-277): override `MeldDoc.on_container_switch_in_event` (WP3 T3.4, called from `_on_current_tab_changed`) to schedule `treeview_focussed.setFocus` and `on_treeview_cursor_changed` on the doc's scheduler so toolbar/status state is fresh.
 3. `closed` signal / delete-event: DirDiff has no dirty state; closing needs no confirmation (melddoc.py:126-135 returned RESPONSE_OK unconditionally for dirdiff).
 4. Connect `Preferences.changed` → `on_preference_changed`; verify `filters` (name filters) changes take effect on next refresh (1.4 only live-reloaded `regexes`, :316-318 — preserve exactly: name-filter pref changes require reopening the tab; do not add live reload).
 5. Run the full manual smoke script (AC12) on Linux and macOS; fix paint/geometry fallout.
@@ -2412,17 +2421,17 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 ### Contracts consumed / provided
 
 **Consumed (from WP2/WP3 — verify by grep before coding, adapt names only if the landed code differs):**
-- `meldq.doc.MeldDoc(QObject)`: signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()`; attributes `scheduler` (FifoScheduler), `prefs`, `num_panes`, `label_text`; methods `stop()`, `_open_files(list)`; the `pump_paused()` context manager (add it per T5.6 if WP2 didn't).
+- `meldq.doc.MeldDoc(QObject)`: signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()`; attributes `scheduler` (FifoScheduler), `prefs`, `num_panes`, `label_text`; methods `stop()`, `_open_files(list)`; the §2.5 `scheduler.paused` modal-pause convention (see T5.6).
 - Doc/shell action contract: `doc_actions()`, `menu_contributions()`, `toolbar_contributions()` consumed by `DocActionManager` on `QTabWidget.currentChanged`.
-- `meldq.engine.task.FifoScheduler`: `add_task(callable)`, `tasks_pending()`, `iteration()`, `remove_all_tasks()`, `runnable_cb`; `app.SchedulerPump` timer semantics.
+- `meldq.engine.task.FifoScheduler`: `add_task(task, atfront=False)`, `tasks_pending()`, `iteration()`, `remove_all_tasks()`, `runnable_cb`; `app.SchedulerPump` timer semantics.
 - `meldq.util.prefs.Preferences`: `changed(str)` signal; keys `regexes`, `filters`, `ignore_symlinks`, `color_delete_bg`, `color_replace_bg`.
 - `meldq.widgets.historycombo.FileHistoryCombo`: path get/set, history prepend, Enter-activation signal.
 - `meldq.util.misc`: `shorten_names`, `shell_to_regex`, `copy2`, `copytree`, `ListItem`, `all_equal` (Qt-free, enforced by test).
 - `meldq.conf`: `_`, `ngettext`, resource path helper.
-- Neutral `next_diff` direction enum (define in `meldq/doc.py` if absent).
+- Neutral `next_diff` direction enum: `meldq.doc.Direction` (provided by WP3 T3.4).
 
 **Provided (other WPs code against these):**
-- `meldq.widgets.treemodel`: `DiffTreeModel(QStandardItemModel)` with `ROLE_PATH/ROLE_STATE/ROLE_ISDIR` (normative) + `ROLE_NEWER` (additive, defaults False), methods `add_entries/add_empty/add_error/value_path/value_paths/set_state/get_state/set_newer/inorder_search_down/inorder_search_up`; module functions `rowpath`, `index_for_rowpath`; STATE_* re-exports. **WP7 (vcview) builds on this file — no dirdiff-private behavior.**
+- `meldq.widgets.treemodel`: `DiffTreeModel(QStandardItemModel)` with `ROLE_PATH/ROLE_STATE/ROLE_ISDIR` (normative) + `ROLE_NEWER` (additive, defaults False), methods `add_entries/add_empty/add_error/value_path/value_paths/set_state/get_state/set_newer/inorder_search_down/inorder_search_up` plus the WP4 T4.3 model methods `rowpath`/`index_for_rowpath`; STATE_* constants (canonical in this file per WP4 T4.2). **WP7 (vcview) builds on this file — no dirdiff-private behavior.**
 - `meldq.diffmap.DiffMap` with the `setup(scrollbar, chunk_fn)` API (if this WP creates it; the filediff WP extends or replaces internals but keeps `setup`).
 - `DirDiff.set_locations(list[str])`, `DirDiff.next_diff(direction)`, `DirDiff.on_reload_activate()` for the shell.
 
@@ -2450,14 +2459,14 @@ Normative semantics (this is the WP-mandated redesign of dirdiff.py:83-98):
 2. **Tree model + traversal:** `python -m pytest tests/test_treemodel.py -q` green. Must include: rowpath/index_for_rowpath round-trip on a 3-level tree; `inorder_search_down` from root visits all rows in documented order and **terminates without RuntimeError at the last row** (PEP 479 regression, tree.py:138/:158 — same for `_up` at the first row); `value_path` on an `add_empty` row returns `None` (tree.py:88 regression); `data()` returns bold+`#008800` foreground for STATE_NEW and strikethrough font for STATE_MISSING.
 3. **_files_same:** `python -m pytest tests/test_files_same.py -q` green (cases enumerated in T5.2, including the invalid-UTF-8 no-exception case — dirdiff.py:83 regression — and the filter-equal → 2 case).
 4. **Scan populates the model** (dirdiff.py:500-501 regression): `python -m pytest tests/test_dirdiff_scan.py -q` green. With the `basic/` fixture and the scheduler drained via `while doc.scheduler.tasks_pending(): doc.scheduler.iteration()`, the model contains rows for every fixture entry with states: same.txt→STATE_NORMAL, mod.txt→STATE_MODIFIED, only-left.txt→STATE_NEW+STATE_MISSING pair, emptydir child→STATE_EMPTY placeholder; parent dir rows with differences are expanded in all visible views.
-5. **`python -O -m pytest tests/test_dirdiff_scan.py -q`** also green, and the case-collision test (files `a.txt`+`A.txt`, `ignore_case=True`, `QMessageBox.warning` monkeypatched to record) reports exactly one collision message containing `hidden by` under both `-O` and normal runs (dirdiff.py:427-436 regression), and the monkeypatched `pump_paused` context is entered around it (dirdiff.py:439 contract).
+5. **`python -O -m pytest tests/test_dirdiff_scan.py -q`** also green, and the case-collision test (files `a.txt`+`A.txt`, `ignore_case=True`, `QMessageBox.warning` monkeypatched to record) reports exactly one collision message containing `hidden by` under both `-O` and normal runs (dirdiff.py:427-436 regression), and `scheduler.paused` is set around it (assert via a monkeypatched QMessageBox that checks the flag; dirdiff.py:439 / §2.5 contract).
 6. **Text-filter compilation on py3.11** (dirdiff.py:249 regression): a test sets `prefs.regexes` to an active filter line and asserts `update_regexes` produces a pattern with MULTILINE flag active and raises no `re.error`.
 7. **Operations:** `python -m pytest tests/test_dirdiff_ops.py -q` green: copy-right creates the file on disk and flips the row to STATE_NORMAL; delete with two selected sibling rows (dialogs monkeypatched to Ok) removes both correct rows from disk AND model (mutation-while-iterating regression, dirdiff.py:578/:744); hide-selected removes rows from the model only and `refresh()` restores them; `next_diff(Direction.DOWN)` from the root lands the cursor on the first non-NORMAL row and at the tree end returns without exception; `create_diff` emission payload is a `list`, not a filter object (dirdiff.py:524 regression).
 8. **Sync:** `python -m pytest tests/test_dirdiff_sync.py -q` green: expanding a row in view 0 expands it in views 1/2; setting view0's vertical scrollbar propagates the value; `qtbot.keyClick(view0, Qt.Key.Key_Right)` moves focus to view 1, transfers the selection, and `status_changed` fires with a non-empty `rwx :` string (dirdiff.py:643 direct-call regression); focus on pane 0 leaves DirCopyLeft disabled and DirCopyRight enabled.
 9. **DiffMap:** test builds a model with a MODIFIED run, asserts `_diffmap_chunks(0)` yields one chunk with `color_replace_bg`-derived color and correct fractions; `qtbot.mouseClick` at 50% height sets the scrollbar to approximately mid-range (±pageStep/2).
 10. **Pane-count switching** (dirdiff.py:863/:866 regression): a test calls `set_num_panes(2)` then `set_num_panes(3)` and asserts widget visibility flags for views/fileentries/diffmaps/spacers match the slicing spec in T5.3, and that after each switch the new model's `selectionModel().currentRowChanged` is connected (spy on `on_treeview_cursor_changed` after programmatic `setCurrentIndex`).
 11. **Qt-free util check:** the WP0-provided purity test that `meldq/util/misc.py` imports no Qt still passes: `python -m pytest tests/test_purity.py -q`.
-12. **Manual smoke (Linux and macOS):** `meldq <fixture>/basic/left <fixture>/basic/right` — observe: three… two synced trees with colored/bold state text and file/folder icons, newer-emblem on the newer mod.txt, status bar shows `rwx` string when a row is selected, toolbar shows Compare/Left/Right/Delete/Hide/Case/Same/New/Modified/Filters in order, unchecking Same hides same.txt after refresh, right-click shows Compare/Left/Right/Open/Delete popup and its actions work, double-clicking mod.txt emits create_diff (opens a filediff tab if WP4 landed, else logged by the shell), Left/Right arrows hop panes, clicking the overview strip scrolls, and switching tabs away and back preserves toolbar enablement and status.
+12. **Manual smoke (Linux and macOS):** `meldq <fixture>/basic/left <fixture>/basic/right` — observe: three… two synced trees with colored/bold state text and file/folder icons, newer-emblem on the newer mod.txt, status bar shows `rwx` string when a row is selected, toolbar shows Compare/Left/Right/Delete/Hide/Case/Same/New/Modified/Filters in order, unchecking Same hides same.txt after refresh, right-click shows Compare/Left/Right/Open/Delete popup and its actions work, double-clicking mod.txt emits create_diff (opens a filediff tab if WP6 landed, else logged by the shell), Left/Right arrows hop panes, clicking the overview strip scrolls, and switching tabs away and back preserves toolbar enablement and status.
 
 ### Estimated effort
 
@@ -2675,9 +2684,10 @@ def keyPressEvent(self, e: QKeyEvent) -> None:
 ```python
 class FileDiff(MeldDoc):
     differ = diffutil.Differ                      # class attr, overridden by FileMerge (filediff.py:104)
-    current_diff_changed = pyqtSignal()           # replaces emit("current-diff-changed") :268
-    next_diff_changed = pyqtSignal(bool, bool)    # replaces emit("next-diff-changed") :270
-    MSG_SAME = 1                                  # :112
+    # current_diff_changed() and next_diff_changed(bool, bool) are INHERITED from MeldDoc
+    # (WP3 T3.4) — do NOT re-declare them here (subclass pyqtSignal shadowing hazard);
+    # emit via self.current_diff_changed.emit() etc. (replaces emit(...) at :268/:270)
+    MSG_SAME = 0                                  # :112 — (MSG_SAME,) = range(1)
 
     def __init__(self, prefs: Preferences, num_panes: int) -> None: ...
 ```
@@ -2698,13 +2708,13 @@ Register documents with undo (WP2 contract): `for doc in self.textbuffer: self.u
 
 Wire per-editor: `cursorPositionChanged` → `self.on_cursor_position_changed` (pane-index via `functools.partial`), `focus_changed` → focus bookkeeping + `self.on_current_diff_changed()` (:202-204) + `self.findbar.set_text_edit(view)` equivalent (:376), scrollbars (T6.5). Set editor paint hooks: `chunk_fn = partial(self._chunk_fn_for_pane, i)` (returns `self.linediffer.single_changes(i, bounds)` when `num_panes > 1` else `()`), `is_current_chunk_fn`, `focus_line_fn = lambda: self.cursor.line`.
 
-`load_font()` (:451-471): `font = QFont(); font.fromString? — no:` build from `self.prefs.get_current_font()` which is a Pango string like `"Monospace 12"`; WP3's Preferences must expose `get_current_font_qt() -> QFont` — if it only returns the Pango string, parse `name, size = s.rsplit(" ", 1)`. `self.pixels_per_line = round(QFontMetricsF(font).height())`; apply `set_font_and_tabs(font, self.prefs.tab_size)` per pane; load the five action pixmaps: `self.pixmap_apply0/apply1/delete/copy0/copy1 = QPixmap(icon_path).scaledToHeight(self.pixels_per_line, Qt.TransformationMode.SmoothTransformation)`; `for lm in self.linkmap: lm.update()`. The `gobject.idle_add(load_font)` hack (:197) is dropped (GTK Bug 316730 workaround).
+`load_font()` (:451-471): `font = self.prefs.get_current_font()` — already a `QFont` (WP3 T3.2); no Pango-string parsing and no `get_current_font_qt` variant. `self.pixels_per_line = round(QFontMetricsF(font).height())`; apply `set_font_and_tabs(font, self.prefs.tab_size)` per pane; load the five action pixmaps: `self.pixmap_apply0/apply1/delete/copy0/copy1 = QPixmap(icon_path).scaledToHeight(self.pixels_per_line, Qt.TransformationMode.SmoothTransformation)`; `for lm in self.linkmap: lm.update()`. The `gobject.idle_add(load_font)` hack (:197) is dropped (GTK Bug 316730 workaround).
 
 One-off conversion (commit the PNGs, not the script): for each of `data/icons/button_{apply0,apply1,copy0,copy1,delete}.xpm`, run `QPixmap(xpm).save("meldq/resources/icons/button_<name>.png")` (Qt6 still reads XPM) — icon set: **apply0** (apply left→right), **apply1** (apply right→left), **copy0** (copy-up variant left), **copy1** (copy-up variant right), **delete**.
 
 `on_preference_changed(self, key: str)` connected to `prefs.changed` — dispatch table from :473-503: `tab_size` → re-apply tabs; `use_custom_font`/`custom_font` → `load_font()`; `regexes` → `_update_regexes()`; `spaces_instead_of_tabs` → set editor flag; `ignore_blank_lines` → set differ flag + `self.set_files([None] * self.num_panes)` refresh (:501-503). `show_line_numbers`, `edit_wrap_lines`, `use_syntax_highlighting` are accepted but no-ops (see Deleted).
 
-`set_num_panes(self, n)` (:1208-1231): plain `for` loops over show/hide lists (`setVisible`); QGridLayout collapses hidden columns automatically. Then re-`setup` both diffmaps with `(w, i) in zip(self.diffmap, (0, self.num_panes - 1))` and `chunk_change_fn(i)` closures (:1221-1225 — note the closure-over-loop-variable bug the old code already avoided with `chunk_change_fn`; keep that pattern), re-show statusimages for modified panes, `self._queue_draw()`, `self.recompute_label()`.
+`set_num_panes(self, n)` (:1208-1231): plain `for` loops over show/hide lists (`setVisible`); QGridLayout collapses hidden columns automatically. Then re-`setup_editor` both diffmaps with `(w, i) in zip(self.diffmap, (0, self.num_panes - 1))` and `chunk_change_fn(i)` closures (:1221-1225 — note the closure-over-loop-variable bug the old code already avoided with `chunk_change_fn`; keep that pattern), re-show statusimages for modified panes, `self._queue_draw()`, `self.recompute_label()`.
 
 `recompute_label()` (:660-682): `shortnames = misc.shorten_names(*filenames)`; append `"*"` for modified; statusimage icons: modified+writable → `QIcon.fromTheme("document-save", style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))`; modified+not-writable → `"document-save-as"` (same fallback); not-writable → `"emblem-readonly"` (fallback `SP_MessageBoxWarning`); as 16-px pixmap on the QLabel; `self.label_text = " : ".join(shortnames)`; `self.label_changed()` → emits `label_changed(str)`. Pane label helper `_get_pane_label` (:530-532) uses `_("<unnamed>")` — exact msgid.
 
@@ -2852,7 +2862,7 @@ Note: `contentsChange` fires during UndoSequence's own `doc.undo()`/`redo()` —
 
 **Old refs:** filediff.py:141-146 (wiring + locks), :1142-1152 (`_sync_hscroll`), :1154-1206 (`_sync_vscroll`), :626-631 (size-allocate redraw).
 
-Wiring in `__init__`: for each pane `i`: `tv.verticalScrollBar().valueChanged.connect(partial(self._sync_vscroll, i))`, `tv.horizontalScrollBar().valueChanged.connect(self._sync_hscroll)`. Keep `self._sync_vscroll_lock` / `self._sync_hscroll_lock` booleans (:145-146).
+Wiring in `__init__`: for each pane `i`: `tv.verticalScrollBar().valueChanged.connect(lambda _v, i=i: self._sync_vscroll(i))` (the signal's `int` value arg must be swallowed — a bare `partial(self._sync_vscroll, i)` would receive it as a second positional and TypeError), `tv.horizontalScrollBar().valueChanged.connect(self._sync_hscroll)`. Keep `self._sync_vscroll_lock` / `self._sync_hscroll_lock` booleans (:145-146).
 
 `_sync_hscroll(self, value: int)` (:1142-1152): under lock, `setValue(value)` on the other visible panes' horizontal scrollbars.
 
@@ -2987,7 +2997,7 @@ Cache-consistency subtlety: the `cacheitem in self._inline_cache: continue` shor
 
 #### T6.7 — `DiffMap` overview bar (`meldq/diffmap.py`)
 
-> **Reconciliation:** WP5 (T5.9) already created `meldq/diffmap.py` for dirdiff. Extend the landed `DiffMap` class — keep its public API and add the filediff-specific behavior; do not replace the file.
+> **Reconciliation:** WP5 (T5.9) already created `meldq/diffmap.py` for dirdiff. Extend the landed `DiffMap` class — keep its public API and add the filediff-specific behavior; do not replace the file. Concretely: WP5's `setup(scrollbar, chunk_fn)` fraction-based API must keep working unchanged (dirdiff calls it live) — the filediff entry point below is a NEW method `setup_editor(...)`; add a regression test that dirdiff's diffmap still paints after this task.
 
 **Old refs:** diffmap.py:22-151 (whole file), filediff.py:1221-1225 (setup coupling), :678 (statusimage width coupling).
 
@@ -2996,15 +3006,16 @@ class DiffMap(QWidget):
     WIDTH = 20          # was style property 'width', diffmap.py:135-140
     X_PADDING = 2.5     # was 'x-padding', diffmap.py:141-147
 
-    def setup(self, scrollbar: QScrollBar, editor: DiffTextEdit,
-              change_chunk_fn: Callable[[], Iterable],
-              fill_colors: dict[str, QColor], line_colors: dict[str, QColor]) -> None: ...
+    def setup_editor(self, scrollbar: QScrollBar, editor: DiffTextEdit,
+                     change_chunk_fn: Callable[[], Iterable],
+                     fill_colors: dict[str, QColor], line_colors: dict[str, QColor]) -> None: ...
+    # setup(scrollbar, chunk_fn) — WP5 T5.9's fraction-based API — is kept verbatim for dirdiff
     def paintEvent(self, event) -> None: ...          # replaces do_expose_event :93-117
     def mousePressEvent(self, event) -> None: ...     # replaces do_button_press_event :119-130
     def sizeHint(self) -> QSize: ...                  # replaces do_size_request :132-133 → QSize(self.WIDTH, 0)
 ```
 
-`setup` (replaces :44-62): disconnect previous connections (keep a handler list); store scrollbar/editor/difffunc/colors; connect `editor.document().blockCountChanged.connect(self._on_blockcount_changed)` (replaces buffer "changed" :56 + :87-91 line-count filter — `blockCountChanged` already fires only on line-count changes, so the `_num_lines` comparison collapses); `scrollbar.installEventFilter(self)` and in `eventFilter` trigger `update()` on `QEvent.Type.Resize`, `QEvent.Type.Move`, `QEvent.Type.StyleChange` (replaces "size-allocate"/"style-set" :52-54). `self.update()`.
+`setup_editor` (replaces :44-62): disconnect previous connections (keep a handler list); store scrollbar/editor/difffunc/colors; connect `editor.document().blockCountChanged.connect(self._on_blockcount_changed)` (replaces buffer "changed" :56 + :87-91 line-count filter — `blockCountChanged` already fires only on line-count changes, so the `_num_lines` comparison collapses); `scrollbar.installEventFilter(self)` and in `eventFilter` trigger `update()` on `QEvent.Type.Resize`, `QEvent.Type.Move`, `QEvent.Type.StyleChange` (replaces "size-allocate"/"style-set" :52-54). `self.update()`.
 
 Groove geometry (replaces the ENTIRE stepper computation :64-79):
 
@@ -3030,7 +3041,7 @@ def _groove_rect_in_self(self) -> QRect:
 - diffmap.py:94 — `float(...) / self._num_lines` divides by zero when the buffer is empty (GTK got 1 line minimum from GtkTextBuffer; QTextDocument's `blockCount()` is also ≥1 — but assert it).
 - diffmap.py:126 — `adj.upper` vs `QScrollBar.maximum()` semantics: porting `val = fraction * sb.maximum() - ...` verbatim mis-scales clicks near the bottom by one page. Use `maximum() + pageStep()`.
 - diffmap.py:64-79 — do NOT port the stepper arithmetic; Qt6 styles have no steppers and `SC_ScrollBarGroove` is authoritative (macOS overlay scrollbars return a full-length groove — fine).
-- filediff.py:1223 — `zip(self.diffmap, (0, self.num_panes - 1))`: diffmap1 tracks the LAST visible pane, which changes with `set_num_panes` — `setup` must be re-callable (hence the disconnect bookkeeping).
+- filediff.py:1223 — `zip(self.diffmap, (0, self.num_panes - 1))`: diffmap1 tracks the LAST visible pane, which changes with `set_num_panes` — `setup_editor` must be re-callable (hence the disconnect bookkeeping).
 
 ---
 
@@ -3113,7 +3124,7 @@ painter.drawLine(QPointF(0.35 * wtotal, mid), QPointF(0.65 * wtotal, mid)) # :13
 - filediff.py:1315 — `pair_changes(which, which+1, visible[1:5])` — the visible-bounds slicing (`[None] + ... ` then `[1:5]`) is an artifact; pass the 4-tuple directly but keep argument ORDER (from-lo, from-hi, to-lo, to-hi).
 - filediff.py:1350-1351 — `on_linkmap_scroll_event` IS live (wired at filediff.glade:244/278) even though the plan's D7 note lists it as dead — port the wheel handler.
 - filediff.py:1333 — `locate_chunk` per painted chunk is O(chunks) each; acceptable (GTK did the same) but bound the loop with the visible slice as GTK did or large files crawl.
-- gtk.gdk.SCROLL_UP/DOWN tokens (:811, :1244-1246, :1350) must not leak into the new API — define `class Direction(enum.IntEnum): UP = -1; DOWN = 1` in `meldq/doc.py` if WP3 has not already; `next_diff(direction: Direction)`.
+- gtk.gdk.SCROLL_UP/DOWN tokens (:811, :1244-1246, :1350) must not leak into the new API — import `Direction` from `meldq.doc` (created in WP3 T3.4; do not redefine); `next_diff(direction: Direction)`.
 
 ---
 
@@ -3156,7 +3167,7 @@ def toolbar_contributions(self) -> list[QAction]:
 **Commands** (:314-372): `push_change`/`pull_change`/`delete_change` port verbatim (assertions included). `pull_all_non_conflicting_changes` (:332-349) and `merge_all_non_conflicting_changes` (:351-365): run `merge.Merger()` over `self._get_texts(raw=1)`; the buffer replacement `self.textbuffer[dst].set_text(mergedfile)` (:344, :360) must NOT use `setPlainText` (it clears the undo stack) — instead:
 
 ```python
-self.undosequence.begin_group()                      # :343 on_textbuffer__begin_user_action
+self.undosequence.begin_group(self.textbuffer[dst])  # :343 on_textbuffer__begin_user_action
 cur = QTextCursor(self.textbuffer[dst])
 cur.select(QTextCursor.SelectionType.Document)
 cur.insertText(mergedfile)
@@ -3181,7 +3192,7 @@ def copy_chunk(self, src: int, dst: int, chunk, copy_up: bool) -> None:      # :
 def replace_chunk(self, src: int, dst: int, chunk) -> None:                  # :1441-1451
     b0, b1 = self.textbuffer[src], self.textbuffer[dst]
     t0 = text_between_lines(b0, chunk[1], chunk[2])
-    self.undosequence.begin_group()                                           # :1448
+    self.undosequence.begin_group(b1)                                         # :1448
     cur = QTextCursor(b1)
     cur.setPosition(position_at_line_or_eof(b1, chunk[3]))
     cur.setPosition(position_at_line_or_eof(b1, chunk[4]), QTextCursor.MoveMode.KeepAnchor)
@@ -3229,15 +3240,15 @@ The `"edited line"` tag argument of the old `insert_with_tags_by_name` is intent
 2. `text = doc.toPlainText()` (paragraph separators already `\n`).
 3. Newline write-back (:1015-1031): `isinstance(bufdata.newlines, str)` → `text = text.replace("\n", bufdata.newlines)` if not `"\n"`; `isinstance(..., tuple)` → `QMessageBox` with msgid `_("This file '%s' contains a mixture of line endings.\n\nWhich format would you like to use?") % bufdata.label`, buttons added via `addButton("UNIX (LF)" / "DOS (CR-LF)" / "MAC (CR)", QMessageBox.ButtonRole.ActionRole)` for the kinds present + Cancel; on choice store `bufdata.newlines = k` and convert (:1026-1031); Cancel → return (no result, matches :1024-1025).
 4. Encoding (:1032-1039): `try: data = text.encode(bufdata.encoding)` — on `UnicodeEncodeError`, ask msgid `_("'%s' contains characters not encodable with '%s'\nWould you like to save as UTF-8?")` (Yes/No); **LATENT BUG FIX** (survey): 1.4 falls through WITHOUT re-encoding (py2 would then crash in the ascii write path) — on Yes, `data = text.encode("utf-8"); bufdata.encoding = "utf-8"`, on No return `RESULT_ERROR`. Regression test required.
-5. On success: `self.emit file_changed`? — 1.4 emitted `"file-changed"` (:1041) consumed by vcview refresh; the new MeldDoc contract has no such signal — route through the shell: keep a `file_changed = pyqtSignal(str)` on FileDiff (provided contract, shell may ignore); then `self.undosequence.checkpoint(doc)` (:1042); return `RESULT_OK`.
+5. On success: 1.4 emitted `"file-changed"` (:1041) consumed by vcview refresh; `MeldDoc` (WP3 T3.4) already provides `file_changed = pyqtSignal(str)` and the shell broadcasts it (T3.7) — emit the INHERITED signal, do NOT re-declare it on FileDiff; then `self.undosequence.checkpoint(doc)` (:1042); return `RESULT_OK`.
 
 `save()`/`save_as()`/`save_all()` (:1088-1101) port directly. `set_buffer_writable`/`set_buffer_modified` (:1078-1086) port (index via `self.textbuffer.index(buf)` still works — QTextDocument identity).
 
-**CloseDialog** (port of :534-561 + glade:305-473): `class CloseDialog(QDialog)` — title `_("Save modified files?")`, warning icon, bold label with exact glade wording `_("Some files have been modified.\nWhich ones would you like to save?")` (strip the Pango `<span>` markup, use `QFont.setBold`/rich text `<b>`), a QVBoxLayout of per-pane `QCheckBox(self._get_pane_label(i))` (checked iff modified, disabled iff not — :546-549), `QDialogButtonBox` with `gtk_mnemonic_to_qt(_("_Save Selected"))` (AcceptRole), Cancel (RejectRole), `gtk_mnemonic_to_qt(_("_Discard Changes"))` (DestructiveRole). `FileDiff.on_delete_event(self) -> int` returns `meldq.doc.RESULT_OK` / `RESULT_CANCEL` (add `RESULT_CANCEL` next to WP3's constants if missing): Save-Selected → save each checked pane, any failure → CANCEL (:554-558); window-close (rejected) → CANCEL (:559-560); Discard → OK.
+**CloseDialog** (port of :534-561 + glade:305-473): `class CloseDialog(QDialog)` — title `_("Save modified files?")`, warning icon, bold label with exact glade wording `_("Some files have been modified.\nWhich ones would you like to save?")` (strip the Pango `<span>` markup, use `QFont.setBold`/rich text `<b>`), a QVBoxLayout of per-pane `QCheckBox(self._get_pane_label(i))` (checked iff modified, disabled iff not — :546-549), `QDialogButtonBox` with `gtk_mnemonic_to_qt(_("_Save Selected"))` (AcceptRole), Cancel (RejectRole), `gtk_mnemonic_to_qt(_("_Discard Changes"))` (DestructiveRole). `FileDiff.on_delete_event(self, appquit: bool = False) -> CloseResponse` returns `meldq.doc.CloseResponse.OK` / `CloseResponse.CANCEL` (imported from `meldq.doc` — WP3 T3.4; do NOT add a `RESULT_CANCEL` constant): Save-Selected → save each checked pane, any failure → CANCEL (:554-558); window-close (rejected) → CANCEL (:559-560); Discard → OK.
 
 **PatchDialog** (port of :1047-1076 + glade:474-586): `QDialog` 600×400, read-only `QPlainTextEdit` with the current font, filled from `difflib.unified_diff(texts[0], texts[1], names[0], names[1])` with the `commonprefix` label shortening (:1054-1056); buttons: `_("Copy to Clipboard")` (ActionRole), Save As (`QDialogButtonBox.StandardButton.Save` with text via theme), Cancel. Copy → `QApplication.clipboard().setText(txt)` (no `.store()`); Save As → `_get_filename_for_saving(_("Save patch as..."))` + `_save_text_to_filename(filename, txt.encode("utf-8"))`. Escape rejects natively (glade's explicit accelerator :583 disappears). Optional 20-line `QSyntaxHighlighter` for `+/-/@@` prefixes — mark TODO, not required.
 
-Reload/refresh (:1118-1129): `on_reload_activate` confirm dialog msgid `_("Reloading will discard changes in:\n%s\n\nYou cannot undo this operation.")` (OK/Cancel) then `set_files([b.filename for ...])`; `on_refresh_activate` → `set_files([None] * self.num_panes)`. `on_fileentry_activate` (:1103-1107): connect FileHistoryCombo activation → if `on_delete_event() != RESULT_CANCEL: set_files([e.get_full_path() ...])`. `on_open_activate`/`get_selected_text` (:591-605): selected text via `textCursor().selectedText().replace(" ", "\n")`; `_open_files` comes from MeldDoc (WP3).
+Reload/refresh (:1118-1129): `on_reload_activate` confirm dialog msgid `_("Reloading will discard changes in:\n%s\n\nYou cannot undo this operation.")` (OK/Cancel) then `set_files([b.filename for ...])`; `on_refresh_activate` → `set_files([None] * self.num_panes)`. `on_fileentry_activate` (:1103-1107): connect FileHistoryCombo activation → if `on_delete_event() != CloseResponse.CANCEL: set_files([e.get_full_path() ...])`. `on_open_activate`/`get_selected_text` (:591-605): selected text via `textCursor().selectedText().replace(" ", "\n")`; `_open_files` comes from MeldDoc (WP3).
 
 **Tests** (`tests/test_filediff_save.py`): load CRLF fixture, edit, save → file on disk is CRLF everywhere; mixed-newline fixture + monkeypatched QMessageBox returning the DOS button → all-CRLF file and `bufdata.newlines == "\r\n"`; latin-1 buffer given a `€` char + monkeypatched Yes → file is valid UTF-8 containing `€` and `bufdata.encoding == "utf-8"` (**latent-bug regression**); save clears the modified star in `label_text` (checkpoint round-trip); CloseDialog: modified pane 0 only → checkbox 1 disabled; Discard returns OK without writing.
 
@@ -3259,7 +3270,7 @@ Reload/refresh (:1118-1129): `on_reload_activate` confirm dialog msgid `_("Reloa
 
 Overwrite (replaces :641-648): `FileDiff._toggle_overwrite()` flips `self.textview_overwrite`, calls `setOverwriteMode` on ALL panes, refreshes status via `on_cursor_position_changed(focused_pane, force=True)`; registered as `insert_toggle_cb` on each editor (T6.1).
 
-Findbar (consumes WP4 `FindBar`): instance placed at the bottom of the doc layout, hidden by default. `on_find_activate` → `self.findbar.start_find(self.textview_focussed)`; `on_find_next_activate` → `start_find_next(...)`; `on_replace_activate` → `start_replace(...)` (:607-620 — the `self.keymask = 0` resets are obsolete). Focus-in per pane updates `self.findbar.textview`-equivalent (:376). Escape anywhere in the doc hides it: `QShortcut(QKeySequence(Qt.Key.Key_Escape), self.widget, self.findbar.hide, context=Qt.ShortcutContext.WidgetWithChildrenShortcut)` (replaces :517-518 and :622-624). If WP5's FindBar method names differ, adapt at the call sites (its contract: operate on a `DiffTextEdit` via `QTextDocument.find`).
+Findbar (consumes WP4 `FindBar`): instance placed at the bottom of the doc layout, hidden by default. `on_find_activate` → `self.findbar.start_find(self.textview_focussed)`; `on_find_next_activate` → `start_find_next(...)`; `on_replace_activate` → `start_replace(...)` (:607-620 — the `self.keymask = 0` resets are obsolete). Focus-in per pane updates `self.findbar.textview`-equivalent (:376). Escape anywhere in the doc hides it: `QShortcut(QKeySequence(Qt.Key.Key_Escape), self.widget, self.findbar.hide, context=Qt.ShortcutContext.WidgetWithChildrenShortcut)` (replaces :517-518 and :622-624). FindBar is provided by WP4 (T4.7/T4.8): `start_find`/`start_find_next`/`start_replace`/`hide` operating on any `QPlainTextEdit` via Python `re` (NOT `QTextDocument.find` — WP4's explicit design rule); adapt call sites to those names.
 
 Context menu (replaces :633-639 + filediff-ui.xml Popup): connect each editor's `customContextMenuRequested`; handler focuses the pane (GTK :635 `grab_focus`) and builds a `QMenu` in filediff-ui.xml Popup order: doc-local Save/Save As (no shortcuts — the shell owns Ctrl+S; text `_("Save")`? use theme-standard text via `QKeySequence.StandardKey` naming — set plain `_("Save")`/`_("Save As...")` if those msgids exist in the shell; otherwise reuse shell-provided actions if DocActionManager exposes them), separator, `action_create_patch`, separator, Cut/Copy/Paste bound to the focused editor's `cut()/copy()/paste()`, separator, `action_file_open`; `menu.exec(editor.viewport().mapToGlobal(pos))`.
 
@@ -3323,9 +3334,9 @@ class FileMerge(FileDiff):
 
 **Consumed:**
 - WP2 `engine.diffutil.Differ(QObject)`: `diffs_changed` signal; `set_sequences_iter(list)`, `change_sequence(pane, startline, sizechange, texts)`, `locate_chunk(pane, line) -> (chunk, prev, next)`, `get_chunk(index, from_pane, to_pane=None)`, `pair_changes(from, to, lines)`, `single_changes(pane, lines)`, `all_changes()`, `has_mergeable_changes(pane)`, `sequences_identical()`, `clear()`, `ignore_blanks`; `engine.merge.Merger` (`initialize`, `merge_2_files`, `merge_3_files`, `unresolved`), `AutoMergeDiffer` (+ `get_unresolved_count`, `unresolved` set-attr).
-- WP2 `engine.undo.UndoSequence`: per-document registration on `undoCommandAdded`, `begin_group`/`end_group` (→ edit blocks), `undo`/`redo`, `checkpoint(doc)`, `clear()`, signals `can_undo_changed(bool)`, `can_redo_changed(bool)`, `checkpointed(object, bool)`.
-- WP2 `engine.task.FifoScheduler`: `add_task(callable, atfront=False)`, `tasks_pending()`, `runnable_cb`; generator protocol (yield None…final; never leak StopIteration — PEP 479).
-- WP3 `doc.MeldDoc(QObject)`: signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()`; `self.undosequence/scheduler/prefs/num_panes/label_text`; `_open_files`; tab hooks `on_container_switch_in_event`/`..._out_event`; `RESULT_OK/RESULT_ERROR` constants (this WP adds `RESULT_CANCEL` and `Direction(IntEnum)` to `meldq/doc.py` if absent).
+- WP2 `engine.undo.UndoSequence`: per-document registration on `undoCommandAdded`, `begin_group(doc)`/`end_group()` (→ edit blocks; `begin_group` takes the target document), `undo`/`redo`, `checkpoint(doc)`, `clear()`, signals `can_undo_changed(bool)`, `can_redo_changed(bool)`, `checkpointed(object, bool)`.
+- WP2 `engine.task.FifoScheduler`: `add_task(task, atfront=False)`, `tasks_pending()`, `runnable_cb`; generator protocol (yield None…final; never leak StopIteration — PEP 479).
+- WP3 `doc.MeldDoc(QObject)`: signals `label_changed(str)`, `status_changed(str)`, `create_diff(list)`, `closed()`; `self.undosequence/scheduler/prefs/num_panes/label_text`; `_open_files`; tab hooks `on_container_switch_in_event`/`..._out_event`; `RESULT_OK/RESULT_ERROR` constants; `CloseResponse` and `Direction` enums (both provided by WP3 T3.4 — this WP adds nothing to `meldq/doc.py`).
 - WP3 `app.SchedulerPump` pause convention: pump skips a scheduler while `scheduler.paused` is truthy (docs set/reset it around modal `exec()`).
 - WP3 `DocActionManager`: consumes `doc_actions()`, `menu_contributions()` (keys "file"/"edit"/"changes"/"view", `None` = separator), `toolbar_contributions()` on tab switch.
 - WP3 `util.prefs.Preferences`: `changed(str)` signal; keys `color_{delete,edited,replace,conflict,inline}_{bg,fg}` (QColor-parseable), `text_codecs`, `tab_size`, `spaces_instead_of_tabs`, `ignore_blank_lines`, `regexes`, `get_current_font()`; `util.misc.shorten_names`, `ListItem`, and (added here if missing) `gtk_mnemonic_to_qt`.
@@ -3333,8 +3344,8 @@ class FileMerge(FileDiff):
 
 **Provided:**
 - `meldq/widgets/editor.py` `DiffTextEdit(QPlainTextEdit)`: `focus_changed(bool)`; geometry API `line_height()`, `line_ypos(line)`, `line_at_ypos(y)`, `first_visible_line_fraction()`, `lines_visible()`; paint hooks `chunk_fn`/`is_current_chunk_fn`/`focus_line_fn`/`fill_colors`/`line_colors`; `set_font_and_tabs(font, tab_size)`; undo-key swallowing; `insert_toggle_cb`. (Also consumed by WP-dirdiff? No — dirdiff uses trees; consumed by vcview console only if that WP opts in.)
-- `meldq/filediff.py` `FileDiff(MeldDoc)`: extra signals `current_diff_changed()`, `next_diff_changed(bool, bool)`, `file_changed(str)`; API `set_files(list)`, `set_labels(list)`, `save/save_as/save_all`, `next_diff(Direction)`, `on_delete_event() -> int`, `set_num_panes(n)`, the doc-action contract trio; module helpers `position_at_line_or_eof`, `insert_text_at_line`, `text_between_lines`, `current_keymask`, `utf16_units`.
-- `meldq/filemerge.py` `FileMerge(FileDiff)`; `meldq/linkmap.py` `LinkMap(QWidget).setup(doc, which)`; `meldq/diffmap.py` `DiffMap(QWidget).setup(scrollbar, editor, change_chunk_fn, fill_colors, line_colors)`.
+- `meldq/filediff.py` `FileDiff(MeldDoc)`: emits the inherited MeldDoc signals `current_diff_changed()`, `next_diff_changed(bool, bool)`, `file_changed(str)` (declared in WP3 T3.4 — not re-declared here); API `set_files(list)`, `set_labels(list)`, `save/save_as/save_all`, `next_diff(Direction)`, `on_delete_event(appquit=False) -> CloseResponse`, `set_num_panes(n)`, the doc-action contract trio; module helpers `position_at_line_or_eof`, `insert_text_at_line`, `text_between_lines`, `current_keymask`, `utf16_units`.
+- `meldq/filemerge.py` `FileMerge(FileDiff)`; `meldq/linkmap.py` `LinkMap(QWidget).setup(doc, which)`; `meldq/diffmap.py` `DiffMap(QWidget).setup_editor(scrollbar, editor, change_chunk_fn, fill_colors, line_colors)` (WP5's `setup(scrollbar, chunk_fn)` fraction API kept intact).
 - `meldq/resources/icons/button_{apply0,apply1,copy0,copy1,delete}.png`.
 
 ### Deleted (do-not-port)
@@ -3363,7 +3374,7 @@ class FileMerge(FileDiff):
 4. Latent-bug regressions pass: (a) save-as-UTF-8 fallback actually writes UTF-8 (filediff.py:1032-1039); (b) `set_num_panes` show/hide works (map-for-side-effect :1214/:1219) — asserted by the pane-visibility test; (c) FakeText slicing equals the split-lines oracle (`__getslice__` :396-402); (d) inline offsets with astral chars land on character boundaries (:895-898).
 5. Manual launch `meldq tests/fixtures/lao tests/fixtures/tzu`: two panes with colored chunk backgrounds and boundary lines; scrolling either pane proportionally scrolls the other with the linkmap curves tracking; clicking a linkmap arrow replaces the chunk; holding Shift over the linkmap and moving the mouse morphs icons to delete (click deletes); Ctrl shows copy icons (upper/lower half = copy up/down); diffmap click scrolls; typing in a pane updates chunks live; Ctrl+Z (window level) undoes exactly one chunk op or typing burst; status bar shows `INS : Ln x, Col y`; Alt+Left/Alt+Right push chunks when the Changes menu shows the merge actions.
 6. Manual launch `meldq base local other merged` (4 files, FileMerge path): outer panes read-only, middle pane auto-merged with `Conflicts: N` in the status text, all linkmap actions target the middle pane.
-7. `msgmerge --dry-run` sanity (from the WP-i18n harness): no msgid used in `meldq/filediff.py`/`filemerge.py` is absent from `po/meld.pot` regenerated over the OLD tree — i.e. wordings match 1.4 exactly (spot-check `"Ln %i, Col %i"`, `"Hi_de"`, `"[%s] Reading files"`, `"Files are identical"`, `"_Save Selected"`).
+7. i18n wording sanity at WP-close: spot-check the five msgids `"Ln %i, Col %i"`, `"Hi_de"`, `"[%s] Reading files"`, `"Files are identical"`, `"_Save Selected"` with `grep -F` against the 1.4 sources (wordings must match exactly); the full orphan gate runs in WP8 T8.4 (`tools/i18n_check_orphans.py` against `po/meld-1.4-reference.pot`) and is re-verified in T9.5.
 8. Signals exist with exact names/signatures: `python -c "from meldq.filediff import FileDiff; assert hasattr(FileDiff, 'current_diff_changed') and hasattr(FileDiff, 'next_diff_changed') and hasattr(FileDiff, 'file_changed')"`.
 
 ### Estimated effort
@@ -3383,7 +3394,7 @@ Port Meld's version-control browser to PyQt6: the five kept VC plugin backends (
 Must land first (numbers per playbook; the parenthesised deliverable is what this WP actually needs, so remap by deliverable if numbering differs):
 
 - **WP0** — scaffolding: `meldq/__init__.py` (`__version__`), `meldq/conf.py` (`_`, gettext init at import), `meldq/util/misc.py` (created in WP2), `meldq/resources/icons/`, pyproject/pytest scaffolding.
-- **WP2** — engine: `meldq/engine/task.py` (`FifoScheduler` with `add_task(task, atfront=0)`, `remove_all_tasks()`, `tasks_pending()`, `iteration()`, `runnable_cb`).
+- **WP2** — engine: `meldq/engine/task.py` (`FifoScheduler` with `add_task(task, atfront=False)`, `remove_all_tasks()`, `tasks_pending()`, `iteration()`, `runnable_cb`).
 - **WP3** — shell: `meldq/doc.py` (`MeldDoc(QObject)` with `label_changed/status_changed/create_diff/closed` signals, `self.scheduler`, `self.prefs`, `_open_files`), `meldq/app.py` (`MeldWindow`, `DocActionManager`, `SchedulerPump`), `meldq/util/prefs.py` (`Preferences`).
 - **WP4** — shared widgets: `meldq/widgets/historycombo.py` (`HistoryCombo`, `FileHistoryCombo`), `meldq/widgets/msgarea.py` (`MsgArea`, `MsgAreaController`).
 - **WP4 (shared widgets, extended by WP5 dirdiff)** — `meldq/widgets/treemodel.py`: `DiffTreeModel(QStandardItemModel)` with `ROLE_PATH/ROLE_STATE/ROLE_ISDIR`, the state→QColor/QFont style table in `data()`, `rowpath()`/`index_for_rowpath()`, and the `inorder_search_up/down` traversal helpers (PEP 479-safe — the old `raise StopIteration` at `meld/tree.py:138` and `meld/tree.py:158` must have become plain `return`).
@@ -3392,7 +3403,7 @@ Must land first (numbers per playbook; the parenthesised deliverable is what thi
 
 | Old file:lines | What it does | New home |
 |---|---|---|
-| `meld/vc/_vc.py:33-36` | `STATE_*` constants via `range(12)` | `meldq/vc/_vc.py` verbatim (single origin; `widgets/treemodel.py` imports them, as old `meld/tree.py:25-28` did) |
+| `meld/vc/_vc.py:33-36` | `STATE_*` constants via `range(12)` | `meldq/vc/_vc.py` verbatim values (canonical origin is `widgets/treemodel.py` per WP4 T4.2; `_vc` imports or matches them — see T7.2) |
 | `meld/vc/_vc.py:38-68` | `Entry`/`Dir`/`File` value objects; Pango `<b>Conflict</b>` in `states` (`:40`) | `meldq/vc/_vc.py` — same msgid, markup stripped post-translation; consumed via `ROLE_STATE`, not markup |
 | `meld/vc/_vc.py:70-205` | `Vc`/`CachedVc` command interface, repo-root discovery, `listdir`/`lookup_files` | `meldq/vc/_vc.py` near-verbatim + new `self.warnings: list[str]` channel |
 | `meld/vc/_vc.py:208-214` | `popen`/`call` subprocess helpers (bytes streams) | `meldq/vc/_vc.py` — text-mode, `encoding="utf-8"`, `errors="replace"` (T7.2) |
@@ -3462,7 +3473,7 @@ Tests `tests/test_util_misc_vc.py`: `shell_to_regex("{a,b}*.py")` matches `a1.py
 
 Old ref: `meld/vc/_vc.py` (whole file, 214 lines). Create `meldq/vc/_vc.py`; copy `meld/vc/COPYING` to `meldq/vc/COPYING`.
 
-- Keep `STATE_IGNORED … STATE_MAX = range(12)` (`_vc.py:33-36`) exactly — these ints are the `ROLE_STATE` values of the shared `DiffTreeModel`; `meldq/widgets/treemodel.py` must import them from here (as old `meld/tree.py:25-28` did). If the dirdiff WP defined its own copies, replace them with this import in this task.
+- Keep `STATE_IGNORED … STATE_MAX = range(12)` (`_vc.py:33-36`) exactly — these ints are the `ROLE_STATE` values of the shared `DiffTreeModel`. `meldq/widgets/treemodel.py` (WP4 T4.2) is the canonical origin for the UI layer: `meldq/vc/_vc.py` imports STATE_* from `meldq.widgets.treemodel` (or redefines the identical `range(12)`, asserted equal in `tests/test_vc_base.py`); do NOT change treemodel to import from `_vc` — that inverts the WP4→WP7 landing order.
 - `Entry` (`_vc.py:38-51`): keep the **exact msgid** so the 34 catalogs still match, then strip markup after translation:
   ```python
   from meldq.conf import _
@@ -3490,7 +3501,7 @@ Old ref: `meld/vc/_vc.py` (whole file, 214 lines). Create `meldq/vc/_vc.py`; cop
   ```
   Rationale to encode in comments: utf-8+replace (not locale) so undecodable filename bytes degrade to U+FFFD instead of crashing scans; `call` switches `stdout=PIPE` (`_vc.py:212-214`) to `DEVNULL` — the old PIPE was never drained, a 64 KiB+ output (`bzr check`, `svn info` on big trees) deadlocks `subprocess.call`.
 
-Tests `tests/test_vc_base.py`: `Entry.states[STATE_CONFLICT] == "Conflict"` (markup stripped) and the source literal still contains `<b>Conflict</b>` (read `meldq/vc/_vc.py` text and assert the msgid substring — guards D8 catalog compatibility); `popen(["printf", "héllo"]).read() == "héllo"`; `popen` on a command emitting invalid utf-8 (`printf '\xff'`) yields `"�"` not an exception; `call(["true"]) == 0`, `call(["false"]) == 1`; `find_repo_root` walks up to a marker dir and raises `ValueError` past the fs root; `get_patch_files` extracts names from a sample git patch given `PATCH_INDEX_RE = "^diff --git a/(.*) b/.*$"`.
+Tests `tests/test_vc_base.py`: `_vc`'s STATE_* values equal `meldq.widgets.treemodel`'s; `Entry.states[STATE_CONFLICT] == "Conflict"` (markup stripped) and the source literal still contains `<b>Conflict</b>` (read `meldq/vc/_vc.py` text and assert the msgid substring — guards D8 catalog compatibility); `popen(["printf", "héllo"]).read() == "héllo"`; `popen` on a command emitting invalid utf-8 (`printf '\xff'`) yields `"�"` not an exception; `call(["true"]) == 0`, `call(["false"]) == 1`; `find_repo_root` walks up to a marker dir and raises `ValueError` past the fs root; `get_patch_files` extracts names from a sample git patch given `PATCH_INDEX_RE = "^diff --git a/(.*) b/.*$"`.
 
 **TRAPS**
 - `_vc.py:208-209` — bytes stdout was read by *every* plugin (`git.py:91/97/101`, `svn.py:85`, `mercurial.py:74`, `bzr.py:69/73`); without `text=True` svn/bzr line-iteration matches **str regexes against bytes → TypeError**, and git/hg `.split("\n")` gets `TypeError: a bytes-like object is required`. This is a hard, immediate break — fix here once, never per-plugin.
@@ -3627,10 +3638,10 @@ Old refs: `meld/vcview.py:87-92` (columns/store), `:120-214` (init), `:227-299` 
 In `meldq/vcview.py`:
 
 - Column constants: `COL_NAME, COL_LOCATION, COL_STATUS, COL_REVISION, COL_TAG, COL_OPTIONS = range(6)` (replaces the interleaved scheme at `meld/vcview.py:87` / `meld/tree.py:103-104`).
-- `class VcTreeModel(DiffTreeModel)`: `__init__(self)` calls `super().__init__(panes=1)` then `setColumnCount(6)` and `setHorizontalHeaderLabels([_("Name"), _("Location"), _("Status"), _("Rev"), _("Tag"), _("Options")])` (labels from `meld/vcview.py:163,180-184`). Columns 1-5 are plain `QStandardItem`s (DisplayRole text only); column 0 is the pane column carrying `ROLE_PATH/ROLE_STATE/ROLE_ISDIR` + computed foreground/font/icon. Override the model's STATE_MISSING style entry to bold + strikethrough + `QColor("#000088")`, replicating `meld/vcview.py:92` (copy the class-level style table to an instance attribute before mutating, whatever attribute name the dirdiff WP landed). Add `def set_columns(self, index, location, status, rev, tag, options)` that ensures/creates sibling items via `itemFromIndex(index).parent()` (or `invisibleRootItem()`) `.setChild(row, col, QStandardItem(text))`.
+- `class VcTreeModel(DiffTreeModel)`: `__init__(self)` calls `super().__init__(ntree=1, extra_cols=5)` (six columns total; the WP4 ctor owns the column count) then `setHorizontalHeaderLabels([_("Name"), _("Location"), _("Status"), _("Rev"), _("Tag"), _("Options")])` (labels from `meld/vcview.py:163,180-184`). Columns 1-5 are plain `QStandardItem`s (DisplayRole text only); column 0 is the pane column carrying `ROLE_PATH/ROLE_STATE/ROLE_ISDIR` + computed foreground/font/icon. Override the model's STATE_MISSING style entry to bold + strikethrough + `QColor("#000088")`, replicating `meld/vcview.py:92` (copy the class-level style table to an instance attribute before mutating, whatever attribute name the dirdiff WP landed). Add `def set_columns(self, index, location, status, rev, tag, options)` that ensures/creates sibling items via `itemFromIndex(index).parent()` (or `invisibleRootItem()`) `.setChild(row, col, QStandardItem(text))`.
 - `class VcTreeView(QTreeView)`: `setSelectionMode(ExtendedSelection)`, `setAllColumnsShowFocus(True)`, headers visible; override `mousePressEvent` so a **right-click on an already-selected row does not collapse the multi-selection** (replicates the return-value trick at `meld/vcview.py:399-403`): if `event.button() == Qt.MouseButton.RightButton` and `indexAt(pos)` is in `selectionModel().selectedRows()`, skip `super()`.
 - `class VcView(MeldDoc)`, `def __init__(self, prefs: Preferences)`:
-  - `self.widget = QWidget()`; layout: `QVBoxLayout` → [`MsgAreaController` (from WP4), `QHBoxLayout`(`self.fileentry = FileHistoryCombo(key="direntry", directories_only=True)` — id from `vcview.glade:37` `string1="direntry"` + `int1=1`; `self.combobox_vcs = QComboBox()` packed at the end, per `meld/vcview.py:212`), `self.splitter = QSplitter(Qt.Orientation.Vertical)` → [`self.treeview = VcTreeView()`, console section widget]]. `splitter.setSizes([250, 70])` (glade `:60` position 250, `:96` console height 70).
+  - `self.widget = QWidget()`; layout: `QVBoxLayout` → [`self.msgarea = MsgAreaController()` (WP4), `QHBoxLayout`(`self.fileentry = FileHistoryCombo(history_id="direntry", directory_entry=True)` (WP4 T4.5 kwargs) — id from `vcview.glade:37` `string1="direntry"` + `int1=1`; `self.combobox_vcs = QComboBox()` packed at the end, per `meld/vcview.py:212`), `self.splitter = QSplitter(Qt.Orientation.Vertical)` → [`self.treeview = VcTreeView()`, console section widget]]. `splitter.setSizes([250, 70])` (glade `:60` position 250, `:96` console height 70).
   - Console section: `QVBoxLayout` with `self.console_toggle = QToolButton()` (`setArrowType(Qt.ArrowType.DownArrow)` when open / `RightArrow` when closed, `setAutoRaise(True)`, `setCheckable(True)`) above `self.consoleview = QPlainTextEdit()` (`setReadOnly(True)`, `setLineWrapMode(NoWrap)`, `setTextInteractionFlags` keep selectable). Toggling sets `self.prefs.vc_console_visible` (bool pref, key `"vc_console_visible"`, default `False` per `meld/preferences.py:251`) and hides/shows only the `consoleview` (replaces the two EventBox/Arrow affordances at `vcview.glade:102-127/182-210` and handler `meld/vcview.py:617-625`).
   - `class _ConsoleStream:` with `__init__(self, textedit)` and `def write(self, s: str | None)` — `if s:` move cursor to `QTextCursor.MoveOperation.End`, `insertPlainText(s)`, `ensureCursorVisible()` (replaces the END-mark dance at `meld/vcview.py:186-196`). `self.consolestream = _ConsoleStream(self.consoleview)`.
   - Console context menu: `consoleview.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)`; handler builds `menu = self.consoleview.createStandardContextMenu()`, inserts a `QAction(_("Clear"))` + separator at the top (old used stock `gtk-clear`, `meld/vcview.py:627-637`); Clear does `self.consoleview.clear()`.
@@ -3660,7 +3671,7 @@ Old refs: `meld/vcview.py:36-44, 97-100, 301-351, 559-615, 639-649`.
   - Filters chosen from the toggle QActions' `isChecked()` (replaces `actiongroup.get_action(...).get_active()` at `:308-319`); `recursive = self.action_flatten.isChecked()`.
   - `entries = [e for e in self.vc.listdir(root) if showable(e)]` — **the `filter()` at `:333` must become a list**: the old code calls `len(entries)` at `:345` and iterates; a py3 filter object would make `len()` raise, and iterating-then-len is a silent empty-list bug.
   - `todo` bookkeeping: entries are `(rowpath_tuple_or_None, name_or_None)`. **py3 sort trap**: `todo.sort()` (`:322`) compared `None` against tuples/str in py2; use `todo.sort(key=lambda t: (t[0] or (), t[1] or ""))` to preserve depth-first ordering without TypeError.
-  - Row addressing via the treemodel contract: `rowpath(index)` tuples in `todo`, resolved with `index_for_rowpath` at pop time; child rows created via the model's add-row helper + `self._update_item_state(child_index, entry, root[prefixlen:])`. Empty dirs: `self.model.add_empty(parent_index, _("(Empty)"))` — if WP6 didn't land `add_empty`, add it to `meldq/widgets/treemodel.py`: creates a row with `ROLE_PATH=None`, `ROLE_STATE=STATE_EMPTY`, display text.
+  - Row addressing via the treemodel contract: `rowpath(index)` tuples in `todo`, resolved with `index_for_rowpath` at pop time; child rows created via the model's add-row helper + `self._update_item_state(child_index, entry, root[prefixlen:])`. Empty dirs: `self.model.add_empty(parent_index, _("(Empty)"))` — `add_empty` is landed by WP4 T4.2 (row with `ROLE_PATH=None`, `ROLE_STATE=STATE_EMPTY`, display text); use it.
   - `_expand_to_root` (`:36-44`) becomes: walk `index.parent()` chain calling `self.treeview.expand(ancestor)`; flatten mode expands only the root row (`:350`).
   - `self.vc.cache_inventory(rootname)` before the loop, `uncache_inventory()` after (`:320/:351`).
 - `_update_item_state(self, index, vcentry, location)` (`:574-583`): set `ROLE_STATE`/`ROLE_ISDIR` on the pane column (model recomputes color/font/icon in `data()`), then `self.model.set_columns(index, location, vcentry.get_status(), vcentry.rev, vcentry.tag, vcentry.options)`.
@@ -3668,7 +3679,7 @@ Old refs: `meld/vcview.py:36-44, 97-100, 301-351, 559-615, 639-649`.
 - `refresh_partial(self, where)` (`:562-572`): non-flatten path — find the row via `find_index_by_name`, hold it as `QPersistentModelIndex`, `insertRow` a fresh sibling after it on the parent item, set path/state, `removeRow` the old one, `self.scheduler.add_task(self._search_recursively_iter(new_index).__next__)`; flatten mode falls back to `self.refresh()` (keep the old `# XXX fixme` comment).
 - `find_index_by_name(self, name) -> QModelIndex | None` (`:596-615`): same walk — compare `ROLE_PATH` equality, descend on `name.startswith(path)`; iterate children by row index instead of `iter_next`.
 - `on_row_activated(self, index)` (`:367-376`): rows with children toggle expand/collapse; leaf rows `self.run_diff([path])` where path = `ROLE_PATH` of column 0.
-- `next_diff(self, direction)` (`:639-649`): `direction` is `meldq.doc.Direction.UP/DOWN` — if WP3 didn't define it, add `class Direction(enum.Enum): UP = 1; DOWN = 2` to `meldq/doc.py` in this task (replaces the `gtk.gdk.SCROLL_UP` dict-key token at `:642`, callers at `meld/meldapp.py:456/459`). Start from the last selected row (or row 0), use the treemodel traversal helpers (`inorder_search_up/down`), stop at the first row whose `ROLE_STATE` ∉ `(STATE_NORMAL, STATE_EMPTY)`, then expand-to + `setCurrentIndex` + `scrollTo`.
+- `next_diff(self, direction)` (`:639-649`): `direction` is `meldq.doc.Direction.UP/DOWN` — import it from `meldq.doc` (created in WP3 T3.4; do not redefine) (replaces the `gtk.gdk.SCROLL_UP` dict-key token at `:642`, callers at `meld/meldapp.py:456/459`). Start from the last selected row (or row 0), use the treemodel traversal helpers (`inorder_search_up/down`), stop at the first row whose `ROLE_STATE` ∉ `(STATE_NORMAL, STATE_EMPTY)`, then expand-to + `setCurrentIndex` + `scrollTo`.
 - `on_file_changed(self, filename)` (`:585-594`): re-lookup the single file via `self.vc.lookup_files([], [(basename, path)])[1]` and `_update_item_state`.
 - `_get_selected_paths/_get_selected_files` (`:411-421`): `selectionModel().selectedRows(0)` → `ROLE_PATH`; filter `None` (empty-row placeholders); strip ONE trailing slash: `p[:-1] if p.endswith("/") else p` — the old idiom `x[-1] != "/" and x or x[:-1]` (`:421`) is a py2 and-or ternary; do not port it literally (it also IndexErrors on `""`).
 
@@ -3733,14 +3744,14 @@ Old refs: `meld/vcview.py:378-397, 423-464, 506-557`.
   - Yield `"[%s] %s" % (self.label_text, msg.replace("\n", "↲"))` (the `u"↲"` literal at `:428` is plain `"↲"` now).
   - `relpath` inner helper and workdir computation verbatim (`:429-438`, uses `_commonprefix`/`self.vc.get_working_directory`).
   - `self.consolestream.write(shelljoin(command + files) + " (in %s)\n" % workdir)`; `readfunc = read_pipe_iter(command + files, self.consolestream, workdir=workdir).__next__` (`:440-441`).
-  - Loop `while r is None: r = readfunc(); self.consolestream.write(r); yield 1` — `except OSError as e:` (old `except IOError, e` at `:447`) must NOT open a modal dialog: this code runs inside a pump tick; a nested `exec()` event loop would re-enter the pump and call `next()` on this very generator → `ValueError: generator already executing`. Instead: `self.msgarea.add_error(_("Error running command.\n'%s'\n\nThe error was:\n%s") % (shelljoin(command), e))` (MsgArea API per WP4; keep old wording `:448`).
+  - Loop `while r is None: r = readfunc(); self.consolestream.write(r); yield 1` — `except OSError as e:` (old `except IOError, e` at `:447`) must NOT open a modal dialog: this code runs inside a pump tick; a nested `exec()` event loop would re-enter the pump and call `next()` on this very generator → `ValueError: generator already executing`. Instead: `self.msgarea.new_from_text_and_icon("dialog-error", _("Error running command.\n'%s'\n\nThe error was:\n%s") % (shelljoin(command), e))` plus a Hide button per WP6 T6.3's `add_dismissable_msg` pattern (the WP4 `MsgAreaController` API — it has no `add_error`; keep old wording `:448`).
   - `if refresh: self.refresh_partial(workdir)`; final `yield workdir, r` (`:450-452`).
 - `_command` / `_command_on_selected` (`:454-464`): `self.scheduler.add_task(self._command_iter(command, files, refresh).__next__)`.
-- `run_diff_iter(self, path_list, empty_patch_ok)` (`:378-393`): `difffunc = self._command_iter(self.vc.diff_command(), path_list, False).__next__`; replace `type(diff) != type(())` (`:382`) with `while not isinstance(diff, tuple):`; empty patch + `empty_patch_ok` → MsgArea info `_("No differences found.")` (`:390`, generator context — no modal); otherwise `self.create_diff.emit([path])` per path (`:392-393`).
-- `run_diff(self, path_list, empty_patch_ok=False)` (`:395-397`): one task per path, `atfront=1`.
-- `show_patch(self, prefix, patch)` (`:506-557`): port verbatim mechanics — `tempfile.mkdtemp("-meld")` tracked in `self.tempdirs`, `self.vc.get_patch_files(patch)` (regex on str patch), copy-or-create originals, `patchcmd = self.vc.patch_command(tmpdir)`, `if write_pipe(patchcmd, patch) == 0: self.create_diff.emit(list(d)) for each (destfile, pathtofile)`. Failure branch: keep the exact long msgid block (`:530-551`) with `%` args `(self.vc.NAME, __version__, self.vc.NAME, " ".join(self.vc.diff_command()), " ".join(patchcmd))` — `from meldq import __version__` replaces `import meldapp; meldapp.version` (`:529, :552`); strip-join lines as at `:556`; show via MsgArea error (generator context) AND write to console.
-- Surface plugin warnings: at the end of each `_search_recursively_iter` run (and after `_command_iter` completes), `for w in self.vc.warnings: self.msgarea.add_warning(w)`; `self.vc.warnings.clear()` — this is where the cvs `.cvsignore` message (T7.6) reaches the user, replacing `misc.run_dialog`.
-- Pump-pausing note: this WP deliberately keeps **zero modal dialogs inside generator frames**; `CommitDialog.exec()` (T7.12) runs from a QAction slot (plain event-loop context), where pump ticks during `exec()` only advance *other* tasks — same as GTK's `idle_add` during `gtk.Dialog.run()`. If a future change must exec() inside a generator, use `SchedulerPump.pause()/resume()` per the shell contract.
+- `run_diff_iter(self, path_list, empty_patch_ok)` (`:378-393`): `difffunc = self._command_iter(self.vc.diff_command(), path_list, False).__next__`; replace `type(diff) != type(())` (`:382`) with `while not isinstance(diff, tuple):`; empty patch + `empty_patch_ok` → `self.msgarea.new_from_text_and_icon("dialog-information", _("No differences found."))` (`:390`, generator context — no modal); otherwise `self.create_diff.emit([path])` per path (`:392-393`).
+- `run_diff(self, path_list, empty_patch_ok=False)` (`:395-397`): one task per path, `atfront=True`.
+- `show_patch(self, prefix, patch)` (`:506-557`): port verbatim mechanics — `tempfile.mkdtemp("-meld")` tracked in `self.tempdirs`, `self.vc.get_patch_files(patch)` (regex on str patch), copy-or-create originals, `patchcmd = self.vc.patch_command(tmpdir)`, `if write_pipe(patchcmd, patch) == 0: self.create_diff.emit(list(d)) for each (destfile, pathtofile)`. Failure branch: keep the exact long msgid block (`:530-551`) with `%` args `(self.vc.NAME, __version__, self.vc.NAME, " ".join(self.vc.diff_command()), " ".join(patchcmd))` — `from meldq import __version__` replaces `import meldapp; meldapp.version` (`:529, :552`); strip-join lines as at `:556`; show via `self.msgarea.new_from_text_and_icon("dialog-error", ...)` (generator context) AND write to console.
+- Surface plugin warnings: at the end of each `_search_recursively_iter` run (and after `_command_iter` completes), `for w in self.vc.warnings: self.msgarea.new_from_text_and_icon("dialog-warning", w)`; `self.vc.warnings.clear()` — this is where the cvs `.cvsignore` message (T7.6) reaches the user, replacing `misc.run_dialog`.
+- Pump-pausing note: this WP deliberately keeps **zero modal dialogs inside generator frames**; `CommitDialog.exec()` (T7.12) runs from a QAction slot (plain event-loop context), where pump ticks during `exec()` only advance *other* tasks — same as GTK's `idle_add` during `gtk.Dialog.run()`. If a future change must exec() inside a generator, set `scheduler.paused = True/False` around the `exec()` per §2.5.
 
 Test `tests/test_vcview_commands.py`: with a `_null`-backed view on `tmp_path`, drive `view._command_iter(["sh", "-c", "echo hello"], [str(tmp_path)], False)` manually with `next()` until the tuple arrives; assert console text contains the shelljoined command line and `"hello"`, and the final value is `(workdir, "hello\n")`. Failure path: command `["definitely-missing-binary-xyz"]` → MsgArea shows the error banner, generator completes without exception, no modal appeared (assert `QApplication.activeModalWidget() is None`).
 
@@ -3765,10 +3776,10 @@ Old refs: `meld/vcview.py:58-85`; `data/ui/vcview.glade:237-511` (title `:240`, 
   ```
   - Set texts: `self.setWindowTitle(_("VC Log"))`, `groupbox_files.setTitle(_("Commit Files"))`, `groupbox_message.setTitle(_("Log Message"))`, `previouslogs_label.setText(_("Previous Logs"))` — exact glade msgids.
   - Changed-files summary (`meld/vcview.py:63-66`): `selected = parent._get_selected_files()`; `topdir = _commonprefix(selected)`; `self.changedfiles.setText(("(in %s) " % topdir) + " ".join(s[len(topdir):] for s in selected))`.
-  - `self.previousentry` constructed with history key `"previousentry"` (glade `:454` `string1`); make its line edit read-only (`self.previousentry.lineEdit().setReadOnly(True)`, mirrors `:70`) so it acts as a picker; `activated[int]` (or the WP4 equivalent selection signal) → `self.textview.setPlainText(self.previousentry.currentText())` (replaces `on_previousentry_activate`, `:83-85`); `setCurrentIndex(0)` if history non-empty (`:71`).
+  - `self.previousentry` re-keyed via `set_history_id("previousentry")` after `loadUi` (glade `:454` `string1`; Designer promotion constructs it with the default ctor); make its line edit read-only (`self.previousentry.lineEdit().setReadOnly(True)`, mirrors `:70`) so it acts as a picker; `activated[int]` (or the WP4 equivalent selection signal) → `self.textview.setPlainText(self.previousentry.currentText())` (replaces `on_previousentry_activate`, `:83-85`); `setCurrentIndex(0)` if history non-empty (`:71`).
   - Focus + preselect (`:72-75`): `self.textview.setFocus()`; `self.textview.selectAll()` (replaces the place_cursor/move_mark selection dance — GTK put the cursor at start with selection to end; `selectAll()` is the accepted equivalent).
   - Shortcuts (glade `:289-290`): `QShortcut(QKeySequence("Ctrl+Return"), self, self.accept)` and `QShortcut(QKeySequence("Ctrl+Enter"), self, self.accept)`; `buttonbox.accepted/rejected` → `accept/reject`.
-  - `def run(self) -> None` (keeps the old entry-point name, `:69-82`): `response = self.exec()`; `msg = self.textview.toPlainText()`; `if response == QDialog.DialogCode.Accepted: self.parent_view._command_on_selected(self.parent_view.vc.commit_command(msg))`; `if msg.strip(): self.previousentry.prepend_history(msg)`; `self.deleteLater()`.
+  - `def run(self) -> None` (keeps the old entry-point name, `:69-82`): `response = self.exec()`; `msg = self.textview.toPlainText()`; `if response == QDialog.DialogCode.Accepted: self.parent_view._command_on_selected(self.parent_view.vc.commit_command(msg))`; `if msg.strip(): self.previousentry.prepend_text(msg)` (`HistoryCombo` API — `prepend_history` exists only on `FileHistoryCombo`; old code used `prepend_text`, `meld/vcview.py:81`); `self.deleteLater()`.
 - `VcView.on_button_commit_clicked`: `CommitDialog(self).run()` (`:468-470`) — QAction slot context, modal exec is safe (see T7.11 note).
 
 Test `tests/test_vcview_commit.py` (pytest-qt, QSettings redirected to a temp ini): open dialog against a stub VcView whose `_command_on_selected` records its arg and whose `vc` is `_null.Vc(tmp)`; type a message, `qtbot.keyClick(dlg, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)`; assert dialog accepted, recorded command equals `["true", "commit", "-m", "<msg>"]`, and a second dialog shows the message at history index 0 with the text preloaded into `textview` after selecting it.
@@ -3788,9 +3799,9 @@ Test `tests/test_vcview_commit.py` (pytest-qt, QSettings redirected to a temp in
 
 ### Contracts consumed / provided
 
-**Consumed** (must exist, exact names): `MeldDoc` signals `label_changed(str)` / `status_changed(str)` / `create_diff(list)` / `closed()` and `self.scheduler` (WP3); `FifoScheduler.add_task(callable, atfront=0)/remove_all_tasks()/tasks_pending()/iteration()` (WP2); `DiffTreeModel` with `ROLE_PATH/ROLE_STATE/ROLE_ISDIR`, state→style table, `rowpath`/`index_for_rowpath`, `inorder_search_up/down` (WP6); `HistoryCombo`/`FileHistoryCombo` with `prepend_history`, `set_filename`, `get_full_path`, persisted history keys (WP4); `MsgArea`/`MsgAreaController` `add_error/add_warning/add_info` (WP4); `Preferences` bool key `"vc_console_visible"` default False (WP3); `DocActionManager` consuming `doc_actions/menu_contributions/toolbar_contributions` (WP3); `SchedulerPump` pumping only the current tab and honoring `runnable_cb` (WP3); `gettext _` from `meldq.conf` (WP0); `meldq.__version__` (WP0).
+**Consumed** (must exist, exact names): `MeldDoc` signals `label_changed(str)` / `status_changed(str)` / `create_diff(list)` / `closed()` and `self.scheduler` (WP3); `FifoScheduler.add_task(task, atfront=False)/remove_all_tasks()/tasks_pending()/iteration()` (WP2); `DiffTreeModel` with `ROLE_PATH/ROLE_STATE/ROLE_ISDIR`, state→style table, `rowpath`/`index_for_rowpath`, `inorder_search_up/down` (WP4 T4.2/T4.3, extended by WP5); `HistoryCombo`/`FileHistoryCombo` with `prepend_history`, `set_filename`, `get_full_path`, persisted history keys (WP4); `MsgArea`/`MsgAreaController` (`new_from_text_and_icon`, `clear`, `has_message`; WP4); `Preferences` bool key `"vc_console_visible"` default False (WP3); `DocActionManager` consuming `doc_actions/menu_contributions/toolbar_contributions` (WP3); `SchedulerPump` pumping only the current tab and honoring `runnable_cb` (WP3); `gettext _` from `meldq.conf` (WP0); `meldq.__version__` (WP0).
 
-**Provided**: `meldq.vc.get_vcs(location) -> list[Vc]`, `get_plugins_metadata() -> list[str]` (consumed by dirdiff's VC-dir filtering); `meldq.vc._vc` — `STATE_*` constants (single origin, imported by `widgets/treemodel.py`), `Entry/Dir/File` (plain-text `get_status()`, `(state, isdir)` consumed via roles), `Vc/CachedVc` with `warnings: list[str]`, `popen/call` text-mode helpers; `VcView(prefs)` + `set_location(path)` + `next_diff(Direction)` + `on_file_changed(filename)` (consumed by `MeldWindow`/new-comparison dialog); `meldq.doc.Direction` (added here if WP3 didn't); `meldq/util/misc.py` additions: `shelljoin`, `commonprefix`, `shell_escape`, `shell_to_regex`, `read_pipe_iter`, `write_pipe`, `gtk_mnemonic_to_qt`; `CommitDialog` + `meldq/ui/vccommit.ui`.
+**Provided**: `meldq.vc.get_vcs(location) -> list[Vc]`, `get_plugins_metadata() -> list[str]` (consumed by dirdiff's VC-dir filtering); `meldq.vc._vc` — `STATE_*` constants (matching `widgets/treemodel.py`'s canonical values, per T7.2), `Entry/Dir/File` (plain-text `get_status()`, `(state, isdir)` consumed via roles), `Vc/CachedVc` with `warnings: list[str]`, `popen/call` text-mode helpers; `VcView(prefs)` + `set_location(path)` + `next_diff(Direction)` + `on_file_changed(filename)` (consumed by `MeldWindow`/new-comparison dialog); `meldq.doc.Direction` (provided by WP3 T3.4, consumed here); `meldq/util/misc.py` additions: `shelljoin`, `commonprefix`, `shell_escape`, `shell_to_regex`, `read_pipe_iter`, `write_pipe`, `gtk_mnemonic_to_qt`; `CommitDialog` + `meldq/ui/vccommit.ui`.
 
 ### Deleted (do-not-port)
 
@@ -3817,7 +3828,7 @@ Test `tests/test_vcview_commit.py` (pytest-qt, QSettings redirected to a temp in
 8. `pytest tests/test_vcview_actions.py` green: 15 doc actions; view-menu contribution = Flatten + "Version status" submenu; toolbar contribution order matches `vcview-ui.xml:16-36`; `VcResolved` disabled for git, enabled for svn (NotImplementedError probing).
 9. `pytest tests/test_vcview_commands.py` green: `_command_iter` streams to the console and finishes with `(workdir, output)`; failure path raises **no modal dialog** (MsgArea only) — asserts `QApplication.activeModalWidget() is None`.
 10. `pytest tests/test_vcview_commit.py` green: Ctrl+Return accepts; commit command receives the typed message; message lands in persisted history and preloads via the Previous Logs combo.
-11. i18n: `msgmerge --dry-run` (or the project's catalog-check script from the packaging WP) reports zero new/orphaned msgids for the strings this WP emits, **except** the three documented new labels (`Open`, `Revert`, `Delete`) and confirms `"%s Not Installed"` is now looked up as a format template (`meld/vcview.py:245` fix).
+11. i18n wording sanity at WP-close: spot-check this WP's msgids with `grep -F` against the 1.4 sources, confirming `"%s Not Installed"` is now looked up as a format template (`meld/vcview.py:245` fix); the three documented new labels (`Open`, `Revert`, `Delete`) go into `po/i18n-allowlist.txt` when WP8 lands; the full orphan gate runs in WP8 T8.4 and is re-verified in T9.5.
 12. Manual smoke (documented in T7.13) passes on Linux and macOS: scan a real git checkout, commit via dialog, console echo, collapse state persistence across restart, right-click multi-selection preserved.
 
 ### Estimated effort
@@ -3835,7 +3846,7 @@ Replace Meld 1.4's hand-written Makefile/intltool/#TOKEN# build machinery with a
 ### Dependencies
 
 - **WP0 (scaffolding) + WP2 (engine)** — package skeleton `meldq/__init__.py`, `meldq/conf.py` stub, engine — required by every task.
-- **WP2** (app shell: `meldq/main.py:main()`, `meldq/app.py`) — required for the console-script entry point (T8.1) and all manual launch checks.
+- **WP3** (app shell: `meldq/main.py:main()`, `meldq/app.py`) — required for the console-script entry point (T8.1) and all manual launch checks.
 - **WP3–WP7** (all string-bearing view/widget/vc WPs) — required only for the orphan gate (T8.4) to flip to *blocking*. T8.1–T8.3 and T8.5–T8.7 can land before them; the gate script lands early but its zero-orphans acceptance criterion is evaluated after WP3–WP7 merge (WP8 is the Phase-6 closer per PYQT_MIGRATION_PLAN.md §4).
 
 ### Old-code map
@@ -3844,7 +3855,7 @@ Replace Meld 1.4's hand-written Makefile/intltool/#TOKEN# build machinery with a
 |---|---|---|
 | `bin/meld:1-123` | Launcher: unbuffered stdout, `--pychecker`/`--profile`/`--sm-*` args, sys.path bootstrap via `meld.doap` sentinel (56-61), gettext init (63-69), py2/pygtk version gates (71-102), glade textdomain + icon-theme registration (109-111), `gtk.main()` (117) | Deleted as a file. Entry point `[project.scripts] meldq = "meldq.main:main"` (T8.1); gettext init → `meldq/conf.py` (T8.2); icon registration → `conf.get_icon()` (T8.6) |
 | `bin/meld:60` | `#LIBDIR#` install-time token | Deleted; importlib.resources moots it (T8.2) |
-| `meld/paths.py:19-48` | `locale_dir()/help_dir()/ui_dir()/icon_dir()` with `#LOCALEDIR#/#HELPDIR#/#SHAREDIR#` tokens (19-24) and in-tree fallbacks (26-30, 39-48) | `meldq/conf.py`: `locale_dir()`, `ui_path()`, `icon_path()` via `importlib.resources`; `help_dir()` not ported (T8.2) |
+| `meld/paths.py:19-48` | `locale_dir()/help_dir()/ui_dir()/icon_dir()` with `#LOCALEDIR#/#HELPDIR#/#SHAREDIR#` tokens (19-24) and in-tree fallbacks (26-30, 39-48) | `meldq/conf.py`: `locale_dir()`, `ui_file()`, `icon_path()` via `importlib.resources`; `help_dir()` not ported (T8.2) |
 | `Makefile:8` | Version derived by grepping `meld/meldapp.py:50` (`version = "1.4.0"`) | `meldq/__init__.py:__version__` + `[tool.setuptools.dynamic]` (T8.1) |
 | `Makefile:26-28, 39-98` | `all`/`install`: token-substituted `.install` files, hand-copied py/glade/icons, `compileall` (73-74), hicolor icon install (85-96) | `pyproject.toml` package-data + pip (T8.1); hicolor install → `tools/install_desktop.py` (T8.7) |
 | `Makefile:100-101` | `intltool-merge` localizes `data/meld.desktop.in` | `tools/build_desktop.py` running `msgfmt --desktop` (T8.7) |
@@ -3930,6 +3941,7 @@ version = {attr = "meldq.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+qt_api = "pyqt6"
 ```
 
 5. Add/extend `.gitignore`: `dist/`, `build/`, `*.egg-info/`, `meldq/locale/`, `po/*.po~`, `__pycache__/`.
@@ -3950,72 +3962,53 @@ testpaths = ["tests"]
 
 **Old refs:** `meld/paths.py:19-48` (whole file), `bin/meld:63-69` (gettext init), `bin/meld:56-61` (doap sentinel), `bin/meld:71-102` (version gates), `meld/meldapp.py:438-442` (help/bug URLs), `Makefile:103-109` + `tools/install_paths` (the mechanism being killed).
 
-**Build** — `meldq/conf.py` (module-level Qt imports FORBIDDEN; see traps):
+**Build** — this task is a **delta on the WP3-landed `meldq/conf.py`** (T3.1), NOT a rewrite.
+WP3's late-bound `_`/`ngettext` + `init_i18n()`, `mnemonic`, `ui_file`, `running_from_source`,
+`package_dir`, `icon_path`, and the module-level-Qt-imports-FORBIDDEN rule stay normative and
+untouched. Add/change only the following:
 
 ```python
-"""Application configuration: resource paths, gettext, shared constants."""
-from __future__ import annotations
-
-import gettext as _gettext_module
-import locale as _locale_module
-import os
-from importlib import resources
-from pathlib import Path
-
+# --- constants: add the new ones; APPLICATION_NAME/GETTEXT_DOMAIN/HELP_URL exist from T3.1 ---
 APPLICATION_NAME = "Meld"          # gobject.set_application_name("Meld"), meldapp.py:134
 DESKTOP_FILE_ID = "meldq"          # basename of data/meldq.desktop.in; see T8.7
 GETTEXT_DOMAIN = "meld"            # KEEP "meld": the 34 catalogs' domain; renaming loses them
 WEBSITE_URL = "https://meldmerge.org"
 HELP_URL = "https://meldmerge.org/help/"          # replaces meldapp.py:439 ghelp:/// URI
-BUG_REPORT_URL = "<this fork's issue tracker URL>" # replaces meldapp.py:442 (bugzilla.gnome.org is dead)
+BUG_REPORT_URL = "<set to this fork's issue tracker before release>"
+# ^ replaces meldapp.py:442 (bugzilla.gnome.org is dead). This OVERRIDES T3.1's verbatim
+#   bugzilla URL — update the T3.1 constant in place; do not keep two values.
 
-_PKG_ROOT = Path(str(resources.files("meldq")))    # real dir for wheel + editable installs; zipimport unsupported (documented)
+def resource_path(*parts: str) -> Path:            # add
+    return package_dir().joinpath("resources", *parts)
 
-def package_dir() -> Path: return _PKG_ROOT
-def resource_path(*parts: str) -> Path: return _PKG_ROOT.joinpath("resources", *parts)
-def icon_path(name: str) -> Path: return resource_path("icons", name)
-def ui_path(name: str) -> Path: return _PKG_ROOT / "ui" / name
-
-def locale_dir() -> Path | None:
-    d = _PKG_ROOT / "locale"
-    return d if d.is_dir() else None
-
-def _init_translation() -> _gettext_module.NullTranslations:
-    languages = None
-    if not any(os.environ.get(k) for k in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG")):
-        try:  # GUI-launched processes on macOS may have no locale env at all
-            loc = _locale_module.getlocale()[0]
-            languages = [loc] if loc else None
-        except ValueError:
-            pass
-    ldir = locale_dir()
-    return _gettext_module.translation(
-        GETTEXT_DOMAIN, localedir=str(ldir) if ldir else None,
-        languages=languages, fallback=True)
-
-_translation = _init_translation()
-_ = _translation.gettext
-ngettext = _translation.ngettext
-
-def N_(message: str) -> str:
+def N_(message: str) -> str:                       # add
     """No-op marker for deferred translation (xgettext keyword, po/Makevars:9)."""
     return message
 ```
 
-Add `tests/test_conf.py`:
+- `locale_dir()` — change in place: prefer `package_dir() / "locale"` (T8.5's compile target)
+  when it exists; else keep T3.1's dev fallback `<repo_root>/build/locale` when
+  `running_from_source()`; else `None` (`init_i18n()` keeps `fallback=True`).
+- `init_i18n()` — extend in place: GUI-launched processes on macOS may have no locale env at
+  all; when none of `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` is set, derive
+  `languages=[locale.getlocale()[0]]` (guard `ValueError`/`None`) and pass it to
+  `gettext.translation(...)`.
+- `get_icon()` / `get_app_icon()` arrive in T8.6 (Qt imported ONLY inside the functions).
+
+Extend WP3's `tests/test_conf.py`:
 - `test_conf_import_is_qt_free`: `subprocess.run([sys.executable, "-c", "import sys, meldq.conf; sys.exit(1 if [m for m in sys.modules if m.startswith('PyQt6')] else 0)"])` returncode == 0.
-- `test_gettext_fallback_without_catalogs`: with `meldq/locale` absent (monkeypatch `locale_dir` to return None and re-run `_init_translation`), `_("x") == "x"` — no exception (the `fallback=True` contract).
+- `test_gettext_fallback_without_catalogs`: with `meldq/locale` absent (monkeypatch `locale_dir` to return None and re-run `init_i18n()`), `_("x") == "x"` — no exception (the `fallback=True` contract).
 - `test_resource_paths_are_absolute`: `icon_path("x.png").is_absolute()`.
 
 **TRAPS:**
 - `meld/paths.py:19-24` tokens are EMPTY in the repo copy — the installed copy differed via `Makefile:103-109`/`tools/install_paths`. Porting the repo file's fallback branch (`paths.py:26-30`) would "work" in-tree and break installed; the whole dual-layout `os.path.exists(..., "data")` switch at `paths.py:39-42, 44-48` must NOT be ported. `importlib.resources.files("meldq")` is correct for editable and wheel installs alike.
 - `bin/meld:56-61`: the `meld.doap` sentinel sys.path hack has no successor — do not invent one; entry points import `meldq` off the normal path.
 - **Qt-free module rule:** `meldq/util/misc.py` and `meldq/engine/*` import `_` from conf, and the WP0 test suite asserts importing them does not pull PyQt6. Therefore `conf.py` must never import Qt at module scope; T8.6's `get_icon`/`get_app_icon` use function-local imports.
-- Import-time `_()` calls exist in ported code (old `meld/preferences.py:262-282` default filters call `_()` in a class-body dict). Because `_` is bound when `meldq.conf` is first imported, translation MUST be initialized at conf import (as above), not lazily from `main()` — otherwise those defaults are permanently untranslated with no error.
-- `bin/meld:77` — `print _("Cannot import: ") + mod + "\n" + str(e)` references `e` leaked from the `except` clauses at `bin/meld:90/96/101`. Py3 deletes except-targets at block exit; this error path never worked as intended even on py2 rewrites. Rewrite dependency-failure reporting from scratch (WP2's `main.py`); never translate `missing_reqs` literally. Reuse the two msgids `"Cannot import: "` (bin/meld:77) and `"Meld requires %s or higher."` (bin/meld:80) verbatim in main.py's PyQt6-import error path — they are in all 34 catalogs (e.g. fr.po:32-33) and otherwise become T8.4 orphans.
+- Import-time `_()` calls exist in ported code (old `meld/preferences.py:262-282` default filters call `_()` in a class-body dict). WP3's late-bound `_` (a module function delegating to the module-global translation) plus T3.9's ordering rule — `conf.init_i18n()` runs before `meldq.app`/`meldq.util.prefs` are imported — handles this; do NOT replace it with an import-time direct `gettext` binding, and do not import prefs before `init_i18n()` in any new tool script.
+- `bin/meld:77` — `print _("Cannot import: ") + mod + "\n" + str(e)` references `e` leaked from the `except` clauses at `bin/meld:90/96/101`. Py3 deletes except-targets at block exit; this error path never worked as intended even on py2 rewrites. Rewrite dependency-failure reporting from scratch (WP3's `main.py`); never translate `missing_reqs` literally. Reuse the two msgids `"Cannot import: "` (bin/meld:77) and `"Meld requires %s or higher."` (bin/meld:80) verbatim in main.py's PyQt6-import error path — they are in all 34 catalogs (e.g. fr.po:32-33) and otherwise become T8.4 orphans.
 - `bin/meld:90,96,101` use py2 `except (X, Y), e` syntax — the file cannot even be imported under py3; treat it as read-only spec.
 - Py3.11 `gettext` removed the `codeset`/`unicode` parameters — do not pass either (2to3-era examples do).
-- `bin/meld:66` bound `_ = gettext.gettext` BEFORE `bindtextdomain` (line 68) — that only worked because module-level `gettext.gettext` resolves the default domain lazily. The new class-based `_translation.gettext` binding resolves at conf import; correct because the catalog dir is static package data.
+- `bin/meld:66` bound `_ = gettext.gettext` BEFORE `bindtextdomain` (line 68) — that only worked because module-level `gettext.gettext` resolves the default domain lazily. WP3's `_` delegates to the module-global translation at each call, so `init_i18n()` may run any time before the first user-visible string is rendered.
 
 **Check:** `python -m pytest tests/test_conf.py -q` green; the Qt-free subprocess check passes.
 
@@ -4045,7 +4038,7 @@ Add `tests/test_conf.py`:
 - GTK stock-labeled actions (`meld/meldapp.py:150-152` Copy/Paste/Find, `:165-166` Stop/Refresh — label `None`) got their visible text from GTK's OWN `gtk20` catalog, not meld's. Their Qt replacements introduce NEW msgids (e.g. `"_Copy"` — hmm, note `"_File"` etc. DO exist, fr.po:745, because glade menus carried them). New msgids are fine (translators fill them later); the gate in T8.4 is one-directional (old ⊆ new) and unaffected.
 - Any new script reading `po/`/glade files must `open(..., encoding="utf-8")` — the old `tools/check_release:25` read files without an encoding and would crash py3 on ru.po et al.
 
-**Check:** `python3 tools/i18n_extract.py` writes `po/meld.pot`; `msggrep -K -e 'seconds' po/meld.pot` shows the `msgid_plural "%i seconds"` entry (once WP3's dirdiff port has landed); `python3 tools/i18n_merge.py` runs over all 34 catalogs with zero failures and `git diff --stat po/` shows only reference-comment/line-number churn.
+**Check:** `python3 tools/i18n_extract.py` writes `po/meld.pot`; `msggrep -K -e 'seconds' po/meld.pot` shows the `msgid_plural "%i seconds"` entry (once WP5's dirdiff port has landed); `python3 tools/i18n_merge.py` runs over all 34 catalogs with zero failures and `git diff --stat po/` shows only reference-comment/line-number churn.
 
 ---
 
@@ -4195,7 +4188,7 @@ def get_app_icon() -> "QIcon":
 - `bin/meld:111` made bare names like `"vc-icon"` resolvable as THEME icons by appending `data/icons` to GTK's icon-theme search path — that is why `meld/meldapp.py:550` and `meld/ui/notebooklabel.py:67` (`gtk.image_new_from_icon_name`) work. `QIcon.fromTheme` will NEVER find these; without the bundled-file fallback branch in `get_icon`, every tab icon silently vanishes (null QIcon renders as blank — no exception).
 - `meld/vcview.py:127-142` registers icon FILE stems (`"vc-commit-24"`) in the gtk.Action `stock_id` slot, and `vcview.py:157` copies `stock_id` into `icon_name` on each toolbar button — a GTK-only indirection. In Qt these are plain `get_icon("vc-commit-24")` calls; do not build any stock-id registry.
 - `meld/tree.py:30-38` and `meld/dirdiff.py:103` scale pixbufs at IMPORT time via the `size` parameter of `gnomeglade.py:120 load_pixbuf` (14/20 px). Scaling is consumer behavior — ship original-size PNGs; consuming WPs scale via `QIcon.pixmap(QSize(...))`. Do not pre-scale assets.
-- **App-icon mismatch (D11):** `meldapp.py:132` sets icon name `"icon"` → `data/icons/icon.png`, while `data/meld.desktop.in:10` declares `Icon=meld` → the hicolor `meld.png` set. These are two DIFFERENT images. Resolution: window icon = `get_app_icon()` (hicolor set, wired in WP2's `main.py` via `app.setWindowIcon(conf.get_app_icon())`), desktop `Icon=meldq` (T8.7). `icon.png` is kept solely as the About-dialog logo (`meldapp.glade:96`).
+- **App-icon mismatch (D11):** `meldapp.py:132` sets icon name `"icon"` → `data/icons/icon.png`, while `data/meld.desktop.in:10` declares `Icon=meld` → the hicolor `meld.png` set. These are two DIFFERENT images. Resolution: window icon = `get_app_icon()` (hicolor set, wired in WP3's `main.py` via `app.setWindowIcon(conf.get_app_icon())`), desktop `Icon=meldq` (T8.7). `icon.png` is kept solely as the About-dialog logo (`meldapp.glade:96`).
 - `Makefile:81-84` shipped `*.xpm` and `*.png` from `data/icons`; the GIMP `.xcf` sources (`16x16/meld.xcf`, `22x22/meld.xcf`) were never shipped — do not copy them into `meldq/resources`.
 - `data/icons/vc-checkout-24.png` is referenced by zero code and zero glade lines (verified by grep over `meld/` and `data/ui/`) — dead asset, do not copy.
 - `data/icons/32x32/meld.svg` duplicates `48x48/meld.svg` — ship one svg (`meld.svg`).
@@ -4235,7 +4228,7 @@ Categories=Qt;Development;
    - Best-effort `update-desktop-database ~/.local/share/applications` and `gtk-update-icon-cache` (ignore failures).
    - `--prefix <dir>` variant for system/distro use (writes under `<prefix>/share/...`, no Exec rewrite).
 4. Expand `README-meldq.md`: install (`pip install .`), build-from-source sequence (`python3 tools/i18n_compile.py && python -m build`), dev setup (`pip install -e .[dev]`, gettext tools requirement), Linux desktop integration (`tools/install_desktop.py --user`, plus the warning that venv installs need the Exec rewrite), release procedure (`git tag v$(python -c 'import meldq; print(meldq.__version__)')` + `python -m build`), and an explicit **macOS launch story**: the app runs as the `meldq` console script from Terminal; no `.app` bundle, no Info.plist, no dock icon polish in this release — **py2app/briefcase packaging is deliberately deferred** to a future WP.
-5. Confirm `conf.HELP_URL`/`conf.BUG_REPORT_URL`/`conf.WEBSITE_URL` (T8.2) are what `meldq/app.py`'s Help menu uses (WP2 contract: Help→Contents = `QDesktopServices.openUrl(QUrl(conf.HELP_URL))`; there is no bundled manual).
+5. Confirm `conf.HELP_URL`/`conf.BUG_REPORT_URL`/`conf.WEBSITE_URL` (T8.2) are what `meldq/app.py`'s Help menu uses (WP3 contract: Help→Contents = `QDesktopServices.openUrl(QUrl(conf.HELP_URL))`; there is no bundled manual).
 
 **TRAPS:**
 - `data/meld.desktop.in:2` `Encoding=UTF-8` is deprecated (drop); `:12` `Categories=GNOME;Application;Development;` — `Application` is not a registered freedesktop category and `GNOME` is wrong for a Qt app; `:13-15` `X-GNOME-Bugzilla-*` keys are dead GNOME infra. None of these survive.
@@ -4243,7 +4236,7 @@ Categories=Qt;Development;
 - The three surviving strings must be byte-identical to 1.4: `Meld` / `Diff Viewer` / `Compare and merge your files` — fr.po:36-43 proves the translations exist; any rewording silently drops every `Name[xx]`/`Comment[xx]` line from the generated file (msgfmt emits localized keys only for msgids it finds in the catalogs — no error otherwise).
 - `msgfmt --desktop` requires PLAIN keys in the template; feeding it the old underscore-key file yields an output with the `_Name` lines passed through untranslated — check the generated file, not just the exit code.
 - Old `Exec=meld` (desktop.in:7) had no field code, so drag-and-drop/„open with" never passed files; `Exec=meldq %F` fixes that. `Exec=meldq` also assumes PATH visibility — pip `--user`/venv installs break launchers (inventory risk), hence the absolute-path rewrite in `install_desktop.py`.
-- Without `StartupWMClass=meldq` AND `QGuiApplication.setDesktopFileName("meldq")` in `main.py` (note for WP2 — `conf.DESKTOP_FILE_ID` exists for this), Linux taskbars fail to match the running window to the launcher and show a generic icon.
+- Without `StartupWMClass=meldq` AND `QGuiApplication.setDesktopFileName("meldq")` in `main.py` (note for WP3 — `conf.DESKTOP_FILE_ID` exists for this), Linux taskbars fail to match the running window to the launcher and show a generic icon.
 - `help/Makefile:4` lists `C de es fr` but `help/de/` contains only `.po` files and no Makefile — `make -C help` has been silently broken (for-loop masks the error). Do not attempt to salvage the help build; help/ is descoped (D12), translations of the manual are accepted losses.
 - `meldapp.py:442` points at `bugzilla.gnome.org` (retired) — `BUG_REPORT_URL` must be this fork's tracker, not a ported dead link.
 
@@ -4255,11 +4248,11 @@ Categories=Qt;Development;
 
 **Consumed:**
 - `meldq/__init__.py` skeleton and the engine/util Qt-free-import test discipline (WP0).
-- `meldq/main.py: def main(argv: list[str] | None = None) -> int` (WP2) — target of `[project.scripts]`; WP2's main is expected to call `conf` first (translation is a conf-import side effect), set `app.setWindowIcon(conf.get_app_icon())`, and call `QGuiApplication.setDesktopFileName(conf.DESKTOP_FILE_ID)`.
+- `meldq/main.py: def main(argv: list[str] | None = None) -> int` (WP3) — target of `[project.scripts]`; WP3's main is expected to call `conf.init_i18n()` first, set `app.setWindowIcon(conf.get_app_icon())`, and call `QGuiApplication.setDesktopFileName(conf.DESKTOP_FILE_ID)`.
 - Every user-visible string in WP2–WP7 wrapped in `_()`/`ngettext()` from `meldq.conf`, reusing 1.4 wording verbatim (D8) — the T8.4 gate audits this.
 
 **Provided (normative for all other WPs):**
-- `meldq.conf`: `_`, `ngettext`, `N_`, `GETTEXT_DOMAIN="meld"`, `APPLICATION_NAME`, `DESKTOP_FILE_ID`, `WEBSITE_URL`, `HELP_URL`, `BUG_REPORT_URL`, `package_dir()`, `resource_path()`, `icon_path(name)`, `ui_path(name)`, `locale_dir()`, `get_icon(name) -> QIcon`, `get_app_icon() -> QIcon`, `GTK_STOCK_TO_THEME`.
+- `meldq.conf`: `_`, `ngettext`, `N_`, `init_i18n()`, `mnemonic()`, `running_from_source()`, `GETTEXT_DOMAIN="meld"`, `APPLICATION_NAME`, `DESKTOP_FILE_ID`, `WEBSITE_URL`, `HELP_URL`, `BUG_REPORT_URL`, `package_dir()`, `resource_path()`, `icon_path(name)`, `ui_file(name)`, `locale_dir()`, `get_icon(name) -> QIcon`, `get_app_icon() -> QIcon`, `GTK_STOCK_TO_THEME`.
 - `meldq.__version__` as the single version truth (about dialog, `--version`, packaging all read it).
 - `pyproject.toml` with `meldq` console script, `highlight` extra (pygments — D10's follow-up feature keys off it), package-data globs for `ui/*.ui`, icons, locale.
 - Tools: `tools/i18n_extract.py`, `tools/i18n_merge.py`, `tools/i18n_compile.py`, `tools/i18n_reference.py`, `tools/i18n_check_orphans.py`, `tools/convert_xpm_icons.py`, `tools/build_desktop.py`, `tools/install_desktop.py`.
@@ -4287,7 +4280,7 @@ Categories=Qt;Development;
 ### Acceptance criteria
 
 1. **Version single-sourcing:** `python -c "import meldq; print(meldq.__version__)"` prints `2.0.0a0`; `grep -rn "2\.0\.0a0" meldq/ pyproject.toml` matches ONLY `meldq/__init__.py`.
-2. **Install + entry point:** in a fresh Python 3.11 venv, `pip install -e .[dev,highlight]` succeeds; `command -v meldq` resolves; `meldq --version` prints `2.0.0a0` (requires WP2) and `meldq --help` exits 0.
+2. **Install + entry point:** in a fresh Python 3.11 venv, `pip install -e .[dev,highlight]` succeeds; `command -v meldq` resolves; `meldq --version` prints `2.0.0a0` (requires WP3) and `meldq --help` exits 0.
 3. **Qt-free conf:** `python -c "import sys, meldq.conf; sys.exit(1 if [m for m in sys.modules if m.startswith('PyQt6')] else 0)"` exits 0.
 4. **Extraction:** `python3 tools/i18n_extract.py` regenerates `po/meld.pot` deterministically (running twice yields identical msgid sets); `pytest tests/test_i18n.py::test_pot_is_fresh -q` passes.
 5. **Reference POT:** `po/meld-1.4-reference.pot` is committed and contains all six sentinel msgids listed in T8.4 (verify: `msggrep -K -e 'Three Way Compare' po/meld-1.4-reference.pot` non-empty, etc.).
@@ -4297,7 +4290,7 @@ Categories=Qt;Development;
 9. **Wheel completeness:** after `python3 tools/i18n_compile.py && python -m build`, `python -c "import zipfile,glob; names=zipfile.ZipFile(glob.glob('dist/meldq-2.0.0a0-*.whl')[0]).namelist(); print(sum(n.endswith('meld.mo') for n in names), sum('resources/icons/' in n for n in names))"` prints `34` and `>= 30`; the wheel contains no `meld/` (old-tree) modules and no `.xpm`/`.xcf` files.
 10. **Icons:** `python -m pytest tests/test_icons.py -q` green (all 30 bundled files load via QImage offscreen; `get_icon` resolves a bundled stem, a gtk stock id, and returns non-null under a live QApplication).
 11. **Desktop file:** `python3 tools/build_desktop.py` generates `data/meldq.desktop` with `Comment[fr]=Comparer et fusionner des fichiers` and no `_`-prefixed or `X-GNOME-*` keys; `desktop-file-validate` (where installed) reports no errors.
-12. **Linux desktop integration (manual):** `python3 tools/install_desktop.py --user` on Linux installs launcher + 5 hicolor icons; `gio launch ~/.local/share/applications/meldq.desktop` opens the Meld window with the meld icon in the taskbar (requires WP2).
+12. **Linux desktop integration (manual):** `python3 tools/install_desktop.py --user` on Linux installs launcher + 5 hicolor icons; `gio launch ~/.local/share/applications/meldq.desktop` opens the Meld window with the meld icon in the taskbar (requires WP3).
 13. **macOS (manual):** on macOS, `meldq` from Terminal launches the app; README-meldq.md contains the explicit statement that `.app` bundling (py2app/briefcase) is deferred.
 14. **Full suite:** `python -m pytest tests/test_conf.py tests/test_i18n.py tests/test_icons.py -q` passes on Linux and macOS (gettext-tool-dependent tests skip cleanly where `xgettext`/`msgfmt` are absent, and CI installs them so nothing skips there).
 
