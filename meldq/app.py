@@ -19,15 +19,21 @@ import os
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from meldq import conf
-from meldq.conf import _
+from meldq.conf import _, mnemonic
 from meldq.doc import CloseResponse, Direction
 
 
@@ -408,9 +414,8 @@ class MeldWindow(QMainWindow):
             method()
 
     def on_menu_file_new_activate(self):
-        # replaced by NewComparisonDialog in T3.8
-        QMessageBox.information(self, "Meld",
-                                _("New comparison dialog not available yet"))
+        dialog = NewComparisonDialog(self)
+        dialog.show()
 
     def on_menu_preferences_activate(self):
         from meldq.prefsdialog import PreferencesDialog
@@ -753,3 +758,116 @@ class DocActionManager(QObject):
                 assert shortcut.toString() not in shell, (
                     f"doc action shortcut {shortcut.toString()} "
                     "collides with a shell action")
+
+
+class NewComparisonDialog(QDialog):
+    """Modeless "Choose Files" dialog (meldapp.py:58-94, meldapp.glade:98-491).
+
+    Built in code (see prefsdialog for the same .ui-vs-code rationale). Entry
+    index 0 is the "Other" (third/ancestor) file; the pop(0) in accept() drops
+    it in 2-way mode — getting it wrong swaps ancestor/mine in every 3-way.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        from meldq.widgets.historycombo import FileHistoryCombo
+
+        self.setWindowTitle(_("Choose Files"))
+        settings = parent.prefs._settings
+        self.notebook = QTabWidget()
+
+        def file_row(history_id, directory):
+            return FileHistoryCombo(history_id, directory_entry=directory,
+                                    settings=settings)
+
+        # File Comparison tab
+        file_tab = QWidget()
+        file_layout = QVBoxLayout(file_tab)
+        self.three_way_compare0 = QCheckBox(mnemonic(_("_Three Way Compare")))
+        self.fileentry0 = file_row("file_comparison", False)   # Other
+        self.fileentry1 = file_row("file_comparison", False)   # Original
+        self.fileentry2 = file_row("file_comparison", False)   # Mine
+        form0 = QFormLayout()
+        form0.addRow(_("Other"), self.fileentry0)
+        form0.addRow(_("Original"), self.fileentry1)
+        form0.addRow(_("Mine"), self.fileentry2)
+        file_layout.addWidget(self.three_way_compare0)
+        file_layout.addLayout(form0)
+        self.notebook.addTab(file_tab, mnemonic(_("_File Comparison")))
+
+        # Directory Comparison tab
+        dir_tab = QWidget()
+        dir_layout = QVBoxLayout(dir_tab)
+        self.three_way_compare1 = QCheckBox(mnemonic(_("_Three Way Compare")))
+        self.direntry0 = file_row("dir_comparison", True)
+        self.direntry1 = file_row("dir_comparison", True)
+        self.direntry2 = file_row("dir_comparison", True)
+        form1 = QFormLayout()
+        form1.addRow(_("Other"), self.direntry0)
+        form1.addRow(_("Original"), self.direntry1)
+        form1.addRow(_("Mine"), self.direntry2)
+        dir_layout.addWidget(self.three_way_compare1)
+        dir_layout.addLayout(form1)
+        self.notebook.addTab(dir_tab, mnemonic(_("_Directory Comparison")))
+
+        # Version Control Browser tab
+        vc_tab = QWidget()
+        vc_layout = QFormLayout(vc_tab)
+        self.vcentry0 = file_row("vc_directory", True)
+        vc_layout.addRow(_("Directory"), self.vcentry0)
+        self.notebook.addTab(vc_tab, mnemonic(_("_Version Control Browser")))
+
+        self.buttonbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Ok)
+        self.buttonbox.accepted.connect(self.accept)
+        self.buttonbox.rejected.connect(self.reject)
+        self.buttonbox.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.notebook)
+        layout.addWidget(self.buttonbox)
+
+        self.entrylists = (
+            [self.fileentry0, self.fileentry1, self.fileentry2],
+            [self.direntry0, self.direntry1, self.direntry2],
+            [self.vcentry0],
+        )
+        self.diff_methods = (parent.append_filediff, parent.append_dirdiff,
+                             parent.append_vcview)
+        self.three_way = [self.three_way_compare0, self.three_way_compare1]
+
+        for page, checkbox in enumerate(self.three_way):
+            checkbox.toggled.connect(
+                lambda checked, p=page: self._on_three_way(p, checked))
+            self.entrylists[page][0].setEnabled(checkbox.isChecked())
+        for entries in self.entrylists:
+            for idx, entry in enumerate(entries):
+                entry.activated.connect(self._make_activate_handler(entries, idx))
+
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    def _on_three_way(self, page, checked):
+        entries = self.entrylists[page]
+        entries[0].setEnabled(checked)
+        (entries[0] if checked else entries[1]).focus_entry()
+
+    def _make_activate_handler(self, entries, idx):
+        def handler():
+            if idx + 1 < len(entries):
+                entries[idx + 1].focus_entry()
+            else:
+                self.buttonbox.button(
+                    QDialogButtonBox.StandardButton.Ok).setFocus()
+        return handler
+
+    def accept(self):
+        page = self.notebook.currentIndex()
+        entries = self.entrylists[page]
+        paths = [e.get_full_path() or "" for e in entries]
+        if page < 2 and not self.three_way[page].isChecked():
+            paths.pop(0)                       # drop the "Other" slot in 2-way
+        for path in paths:
+            entries[0].prepend_history(path)
+        self.diff_methods[page](paths)
+        super().accept()
