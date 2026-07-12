@@ -413,8 +413,10 @@ class MeldWindow(QMainWindow):
                                 _("New comparison dialog not available yet"))
 
     def on_menu_preferences_activate(self):
-        # replaced by PreferencesDialog in T3.10
-        QMessageBox.information(self, "Meld", "Preferences dialog not ported yet")
+        from meldq.prefsdialog import PreferencesDialog
+        dialog = PreferencesDialog(self, self.prefs)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
