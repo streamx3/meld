@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meldq"
+dynamic = ["version"]
+description = "Visual diff and merge tool (PyQt6 port of Meld)"
+license = "GPL-2.0-or-later"
+requires-python = ">=3.11"
+dependencies = ["PyQt6>=6.6"]
+
+[project.optional-dependencies]
+highlight = ["pygments"]
+dev = ["pytest", "pytest-qt"]
+
+[project.scripts]
+meldq = "meldq.main:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "meldq.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["meldq*"]
+
+[tool.setuptools.package-data]
+meldq = ["resources/**/*", "ui/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyqt6"
