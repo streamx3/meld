@@ -12,7 +12,7 @@ dependencies = ["PyQt6>=6.6"]
 
 [project.optional-dependencies]
 highlight = ["pygments"]
-dev = ["pytest", "pytest-qt"]
+dev = ["pytest", "pytest-qt", "pytest-timeout"]
 
 [project.scripts]
 meldq = "meldq.main:main"
