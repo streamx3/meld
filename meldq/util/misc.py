@@ -282,3 +282,28 @@ class ListItem:
         self.value = " ".join(a)
     def __str__(self):
         return "<%s %s %i %s>" % ( self.__class__, self.name, self.active, self.value )
+
+
+def gtk_mnemonic_to_qt(label):
+    """'_Match Case' -> '&Match Case'.
+
+    Escape literal '&' first, then convert only the FIRST underscore (the
+    GTK mnemonic marker) to '&'. Always call _() BEFORE this so the msgid
+    keeps its underscore form for the catalogs.
+    """
+    return label.replace("&", "&&").replace("_", "&", 1)
+
+
+def char_to_utf16_offset(text, char_offset):
+    """Python-str codepoint offset -> QTextDocument UTF-16 code-unit offset."""
+    return char_offset + sum(1 for c in text[:char_offset] if ord(c) > 0xFFFF)
+
+
+def utf16_to_char_offset(text, utf16_offset):
+    """Inverse of char_to_utf16_offset (walk codepoints, count 2 for astral)."""
+    units = 0
+    for i, c in enumerate(text):
+        if units >= utf16_offset:
+            return i
+        units += 2 if ord(c) > 0xFFFF else 1
+    return len(text)
