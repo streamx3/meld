@@ -21,8 +21,14 @@ re-read the new value from the Preferences object (the 1.4 notify_add
 delivered (attr, val), the contract narrows it to the name).
 """
 
+import configparser
+import os
+import pathlib
+import re
+import sys
+
 from PyQt6.QtCore import QObject, QSettings, pyqtSignal
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtGui import QColor, QFont, QFontDatabase
 
 from meldq.conf import _
 
@@ -133,6 +139,112 @@ DEFAULTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# One-time migration from the 1.4 ~/.meld/meldrc.ini
+# ---------------------------------------------------------------------------
+
+# At least the 1.4 default palette plus common X11 tint names. Values are
+# lowercase name -> "#rrggbb"; grayN/greyN are handled programmatically.
+X11_COLORS = {
+    "darkseagreen1": "#c1ffc1", "darkseagreen2": "#b4eeb4",
+    "darkseagreen3": "#9bcd9b", "darkseagreen4": "#698b69",
+    "lightsteelblue1": "#cae1ff", "lightsteelblue2": "#bcd2ee",
+    "lightsteelblue3": "#a2b5cd", "lightsteelblue4": "#6e7b8b",
+    "lightsteelblue": "#b0c4de",
+    "seagreen1": "#54ff9f", "seagreen2": "#4eee94", "seagreen3": "#43cd80",
+    "steelblue1": "#63b8ff", "steelblue2": "#5cacee",
+    "lightblue1": "#bfefff", "lightyellow1": "#ffffe0",
+    "mistyrose1": "#ffe4e1", "azure1": "#f0ffff", "honeydew1": "#f0fff0",
+    "pink": "#ffc0cb", "lightpink": "#ffb6c1",
+    "red": "#ff0000", "black": "#000000", "white": "#ffffff",
+    "lavender": "#e6e6fa", "ivory": "#fffff0", "beige": "#f5f5dc",
+    "khaki": "#f0e68c", "salmon": "#fa8072", "gold": "#ffd700",
+    "orange": "#ffa500", "green": "#008000", "blue": "#0000ff",
+    "yellow": "#ffff00",
+}
+
+
+def legacy_ini_path():
+    if sys.platform == "win32":
+        base = pathlib.Path(os.getenv("APPDATA", "")) / "Meld"
+    else:
+        base = pathlib.Path(os.path.expanduser("~")) / ".meld"
+    return base / "meldrc.ini"
+
+
+def x11_color_to_hex(name):
+    key = name.strip().lower().replace(" ", "")
+    m = re.fullmatch(r"gr[ae]y(\d{1,3})", key)
+    if m:
+        # truncate (matches real X11 and the converted defaults): gray90 -> #e5e5e5
+        v = int(min(int(m.group(1)), 100) * 255 / 100)
+        return "#%02x%02x%02x" % (v, v, v)
+    if key in X11_COLORS:
+        return X11_COLORS[key]
+    c = QColor(name)
+    if c.isValid():
+        return c.name()
+    return None
+
+
+def pango_font_to_qfont_string(pango):
+    tokens = pango.replace(",", " ").split()
+    size = 10
+    if tokens and tokens[-1].lstrip("-").isdigit():
+        size = int(tokens.pop())
+    bold = italic = False
+    while tokens and tokens[-1].lower() in ("bold", "italic", "oblique"):
+        word = tokens.pop().lower()
+        if word == "bold":
+            bold = True
+        else:
+            italic = True
+    family = " ".join(tokens) if tokens else "monospace"
+    f = QFont(family, size)
+    f.setBold(bold)
+    f.setItalic(italic)
+    return f.toString()
+
+
+def migrate_legacy_prefs(settings, ini_path=None):
+    """Copy 1.4 meldrc.ini values into QSettings once. Returns True if run."""
+    if settings.value("migration/meldrc_done"):
+        return False
+    if ini_path is None:
+        ini_path = legacy_ini_path()
+    if not ini_path.exists():
+        settings.setValue("migration/meldrc_done", True)
+        return False
+    # RawConfigParser: stored regex/filter values contain % and $ that
+    # interpolation would choke on; the 1.4 backend wrote everything into
+    # [DEFAULT] (util/prefs.py:193,206).
+    parser = configparser.RawConfigParser()
+    parser.read(ini_path, encoding="utf-8")
+    for key, raw in parser.defaults().items():
+        if key not in DEFAULTS:
+            continue
+        try:
+            coerced = _coerce(raw, DEFAULTS[key].type)
+        except (ValueError, TypeError):
+            continue
+        if key.startswith("color_"):
+            if not (isinstance(coerced, str) and coerced.startswith("#")):
+                hexval = x11_color_to_hex(coerced)
+                if hexval is None:
+                    continue          # unknown name -> fall back to new default
+                coerced = hexval
+        elif key == "custom_font":
+            coerced = pango_font_to_qfont_string(coerced)
+        elif key == "edit_command_type" and coerced == "gnome":
+            coerced = "internal"
+        elif key in ("window_size_x", "window_size_y"):
+            coerced = max(int(coerced), 100)
+        settings.setValue(f"prefs/{key}", coerced)
+    settings.setValue("migration/meldrc_done", True)
+    settings.sync()
+    return True
+
+
 class Preferences(QObject):
     changed = pyqtSignal(str)      # pref name; receivers read the new value off the object
 
@@ -141,6 +253,7 @@ class Preferences(QObject):
         self.__dict__["_values"] = {
             name: Value(v.type, v.default) for name, v in DEFAULTS.items()}
         self.__dict__["_settings"] = settings if settings is not None else make_settings()
+        migrate_legacy_prefs(self._settings)
         for name, value in self._values.items():
             key = f"prefs/{name}"
             if self._settings.contains(key):
