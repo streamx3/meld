@@ -1,0 +1,29 @@
+{
+ "description": ">10 lines unique to one side triggers lines_discarded and snake splitting; invariant-only",
+ "a": [
+  "anchor1",
+  "uniqA0",
+  "uniqA1",
+  "uniqA2",
+  "uniqA3",
+  "uniqA4",
+  "uniqA5",
+  "uniqA6",
+  "uniqA7",
+  "uniqA8",
+  "uniqA9",
+  "uniqA10",
+  "uniqA11",
+  "mid",
+  "anchor2"
+ ],
+ "b": [
+  "anchor1",
+  "mid",
+  "uniqB0",
+  "uniqB1",
+  "uniqB2",
+  "anchor2"
+ ],
+ "expected": null
+}

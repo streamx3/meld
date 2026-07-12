@@ -1,0 +1,14 @@
+{
+ "description": "identical inputs produce no difference opcodes",
+ "a": [
+  "one",
+  "two",
+  "three"
+ ],
+ "b": [
+  "one",
+  "two",
+  "three"
+ ],
+ "expected": []
+}

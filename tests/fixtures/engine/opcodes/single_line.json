@@ -1,0 +1,18 @@
+{
+ "description": "single-line files, full replace",
+ "a": [
+  "only"
+ ],
+ "b": [
+  "different"
+ ],
+ "expected": [
+  [
+   "replace",
+   0,
+   1,
+   0,
+   1
+  ]
+ ]
+}

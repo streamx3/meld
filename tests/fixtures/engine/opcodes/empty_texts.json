@@ -1,0 +1,10 @@
+{
+ "description": "both files are empty text (one empty line from ''.split)",
+ "a": [
+  ""
+ ],
+ "b": [
+  ""
+ ],
+ "expected": []
+}

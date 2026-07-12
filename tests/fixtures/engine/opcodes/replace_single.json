@@ -1,0 +1,22 @@
+{
+ "description": "single line replace",
+ "a": [
+  "a",
+  "b",
+  "c"
+ ],
+ "b": [
+  "a",
+  "x",
+  "c"
+ ],
+ "expected": [
+  [
+   "replace",
+   1,
+   2,
+   1,
+   2
+  ]
+ ]
+}
