@@ -15,13 +15,24 @@
 ### along with this program; if not, write to the Free Software
 ### Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+import codecs
 import difflib
 import functools
+import logging
+import os
 import re
 import time
+import types
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFontMetricsF, QIcon, QPixmap, QTextCharFormat
+from PyQt6.QtGui import (
+    QColor,
+    QFontMetricsF,
+    QIcon,
+    QPixmap,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PyQt6.QtWidgets import (
     QGridLayout,
     QLabel,
@@ -41,7 +52,7 @@ from meldq.util.misc import ListItem
 from meldq.widgets.editor import DiffTextEdit
 from meldq.widgets.findbar import FindBar
 from meldq.widgets.historycombo import FileHistoryCombo
-from meldq.widgets.msgarea import MsgAreaController
+from meldq.widgets.msgarea import MsgAreaController, ResponseId
 
 MASK_SHIFT, MASK_CTRL = 1, 2
 
@@ -371,10 +382,212 @@ class FileDiff(MeldDoc):
             self.cursor.pane = pane
         self._on_current_diff_changed()
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- buffer handlers --------------------------------------------------
+
+    def _ensure_contents_slots(self):
+        if not hasattr(self, "_contents_slots"):
+            self._contents_slots = [
+                functools.partial(self._on_contents_change, i)
+                for i in range(len(self.textbuffer))]
+
+    def _connect_buffer_handlers(self):
+        for view in self.textview:
+            view.setReadOnly(False)
+        self._ensure_contents_slots()
+        for i, doc in enumerate(self.textbuffer):
+            self._prev_blockcount[i] = doc.blockCount()
+            doc.contentsChange.connect(self._contents_slots[i])
+        self._buffer_connected = True
+
+    def _disconnect_buffer_handlers(self):
+        for view in self.textview:
+            view.setReadOnly(True)
+        if getattr(self, "_buffer_connected", False):
+            self._ensure_contents_slots()
+            for i, doc in enumerate(self.textbuffer):
+                try:
+                    doc.contentsChange.disconnect(self._contents_slots[i])
+                except (TypeError, RuntimeError):
+                    pass
+            self._buffer_connected = False
+
+    def set_buffer_writable(self, buf, yesno):
+        pane = self.textbuffer.index(buf)
+        self.bufferdata[pane].writable = yesno
+        self.recompute_label()
+
+    def set_buffer_modified(self, buf, yesno):
+        pane = self.textbuffer.index(buf)
+        self.bufferdata[pane].modified = yesno
+        self.recompute_label()
+
+    # ----- file loading -----------------------------------------------------
 
     def set_files(self, files):
-        pass                    # T6.3
+        """Set num panes to len(files) and load each given file.
+
+        A None element leaves that pane's text as-is.
+        """
+        self._disconnect_buffer_handlers()
+        self._inline_cache = set()
+        for i, f in enumerate(files):
+            if f:
+                self.textbuffer[i].clear()
+                absfile = os.path.abspath(f)
+                self.fileentry[i].set_filename(absfile)
+                self.fileentry[i].prepend_history(absfile)
+                bold, bnew = self.bufferdata[i], MeldBufferData(absfile)
+                if bold.filename == bnew.filename:
+                    bnew.label = bold.label
+                self.bufferdata[i] = bnew
+                self.msgarea_mgr[i].clear()
+        self.recompute_label()
+        self.textview[int(len(files) >= 2)].setFocus()
+        self._connect_buffer_handlers()
+        self.scheduler.add_task(self._set_files_internal(files).__next__)
+
+    def add_dismissable_msg(self, pane, icon, primary, secondary):
+        controller = self.msgarea_mgr[pane]
+        msgarea = controller.new_from_text_and_icon(icon, primary, secondary)
+        msgarea.add_stock_button_with_text(
+            misc.gtk_mnemonic_to_qt(_("Hi_de")), "window-close",
+            ResponseId.CLOSE)
+        msgarea.response.connect(lambda *args: controller.clear())
+        return msgarea
+
+    def _load_files(self, files, textbuffers, panetext):
+        self.undosequence.clear()
+        yield _("[%s] Set num panes") % self.label_text
+        self.set_num_panes(len(files))
+        self._disconnect_buffer_handlers()
+        self.linediffer.clear()
+        self._queue_draw()
+        try_codecs = self.prefs.text_codecs.split() or ["utf_8", "utf_16"]
+        yield _("[%s] Opening files") % self.label_text
+        tasks = []
+
+        for i, f in enumerate(files):
+            buf = textbuffers[i]
+            if f:
+                try:
+                    task = types.SimpleNamespace(
+                        filename=f, pane=i, buf=buf,
+                        codecs_left=try_codecs[:],
+                        fileobj=open(f, "rb"),
+                        decoder=codecs.getincrementaldecoder(try_codecs[0])(),
+                        text=[], was_cr=False, newline_kinds=set())
+                    tasks.append(task)
+                except (OSError, LookupError) as e:
+                    buf.clear()
+                    self.add_dismissable_msg(
+                        i, "dialog-error", _("Could not read file"), str(e))
+            else:
+                panetext[i] = buf.toPlainText()
+        yield _("[%s] Reading files") % self.label_text
+
+        while tasks:
+            for t in tasks[:]:
+                raw = t.fileobj.read(4096)
+                is_eof = len(raw) == 0
+                try:
+                    nextbit = t.decoder.decode(raw, final=is_eof)
+                except UnicodeDecodeError as err:
+                    t.codecs_left.pop(0)
+                    if t.codecs_left:
+                        t.fileobj.close()
+                        t.fileobj = open(t.filename, "rb")
+                        t.decoder = codecs.getincrementaldecoder(
+                            t.codecs_left[0])()
+                        t.buf.clear()
+                        t.text = []
+                        t.was_cr = False
+                        t.newline_kinds = set()
+                    else:
+                        logging.warning("codec error fallback: %s", err)
+                        t.buf.clear()
+                        self.add_dismissable_msg(
+                            t.pane, "dialog-error", _("Could not read file"),
+                            _("%s is not in encodings: %s")
+                            % (t.filename, try_codecs))
+                        tasks.remove(t)
+                    continue
+
+                if "\x00" in nextbit:
+                    t.buf.clear()
+                    self.add_dismissable_msg(
+                        t.pane, "dialog-error", _("Could not read file"),
+                        _("%s appears to be a binary file.") % t.filename)
+                    tasks.remove(t)
+                    continue
+
+                self._append_decoded(t, nextbit)
+
+                if is_eof:
+                    if t.was_cr:                 # dangling trailing lone CR
+                        t.newline_kinds.add("\r")
+                        self._append_normalized(t, "\n")
+                        t.was_cr = False
+                    self.set_buffer_writable(
+                        t.buf, os.access(t.filename, os.W_OK))
+                    self.bufferdata[t.pane].encoding = t.codecs_left[0]
+                    kinds = t.newline_kinds
+                    if len(kinds) == 1:
+                        self.bufferdata[t.pane].newlines = next(iter(kinds))
+                    elif kinds:
+                        self.bufferdata[t.pane].newlines = tuple(sorted(kinds))
+                    else:
+                        self.bufferdata[t.pane].newlines = None
+                    panetext[t.pane] = "".join(t.text)
+                    t.fileobj.close()
+                    tasks.remove(t)
+            yield 1
+
+        for b in self.textbuffer:
+            self.undosequence.checkpoint(b)
+
+    def _append_decoded(self, t, nextbit):
+        # Rejoin a CR held from the previous chunk, then hold a trailing CR
+        # (it may pair with a leading LF in the next chunk).
+        if t.was_cr:
+            nextbit = "\r" + nextbit
+            t.was_cr = False
+        if nextbit.endswith("\r"):
+            t.was_cr = True
+            nextbit = nextbit[:-1]
+        # Count line endings BEFORE normalizing.
+        crlf = nextbit.count("\r\n")
+        lone_cr = nextbit.count("\r") - crlf
+        lone_lf = nextbit.count("\n") - crlf
+        if crlf:
+            t.newline_kinds.add("\r\n")
+        if lone_cr:
+            t.newline_kinds.add("\r")
+        if lone_lf:
+            t.newline_kinds.add("\n")
+        nextbit = nextbit.replace("\r\n", "\n").replace("\r", "\n")
+        self._append_normalized(t, nextbit)
+
+    @staticmethod
+    def _append_normalized(t, text):
+        cur = QTextCursor(t.buf)
+        cur.movePosition(QTextCursor.MoveOperation.End)
+        cur.insertText(text)
+        t.text.append(text)
+
+    def _set_files_internal(self, files):
+        panetext = ["\n"] * len(files)
+        for i in self._load_files(files, self.textbuffer, panetext):
+            yield i
+        for i in self._diff_files(files, panetext):
+            yield i
+
+    # ----- stubs completed by later WP6 tasks -------------------------------
+
+    def _diff_files(self, files, panetext):
+        yield 0                 # T6.4
+
+    def _on_contents_change(self, pane, position, removed, added):
+        pass                    # T6.4
 
     def on_cursor_position_changed(self, pane, force=False):
         pass                    # T6.11
