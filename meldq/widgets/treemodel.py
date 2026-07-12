@@ -212,7 +212,7 @@ class DiffTreeModel(QStandardItemModel):
                                 it = nxt
                                 break
                         else:
-                            return          # PEP 479: was raise StopIteration
+                            return          # PEP 479: terminate cleanly, never raise the sentinel
             yield it
 
     def inorder_search_up(self, it):
@@ -230,7 +230,7 @@ class DiffTreeModel(QStandardItemModel):
                 if up.isValid():
                     it = up
                 else:
-                    return                  # PEP 479: was raise StopIteration
+                    return                  # PEP 479: terminate cleanly, never raise the sentinel
             yield it
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
