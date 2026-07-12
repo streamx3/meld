@@ -334,6 +334,23 @@ model API absorbs this; flag it before WP4 starts).
 **T1.3 — Verdict commit.** Append `S1: PASS/FAIL — <two-line evidence>` and same for S2
 to this section; if either failed, stop per operating rule 9.
 
+### Verdicts (recorded 2026-07: PyQt 6.11 / Qt 6.11 / Python 3.14, macOS)
+
+**S1: PASS** — auto-harness: max 34 block iterations per paint over a full scroll
+sweep of 2,000 lines (bound 200 → painting is O(visible)); anchor alignment error
+0.0 lines across all 30 chunks; reentrancy stable; font 14→18pt re-derives chunk
+fills, boundary lines, and linkmap attachment correctly (verified in renders).
+Caveat: "no ghosting during fast scrolling" was verified by proxy (bounded paint
+cost + correct renders at sampled positions) on the offscreen platform — do a
+2-minute interactive eyeball run (`python spikes/s1_editor.py`) before WP6 starts.
+
+**S2: PASS** — expansion and collapse mirrored across all three views from any
+view; row selection mirrored; 50 rapid expand/collapse cycles without recursion;
+branch indicators render correctly in every view including panes whose tree
+column is not column 0; per-state ForegroundRole colors render. `setTreePosition`
++ hidden sibling columns confirmed viable — WP4's single-shared-model design
+stands; no mirrored-model fallback needed.
+
 ### Acceptance criteria
 1. `python spikes/s1_editor.py` and `python spikes/s2_tree.py` run standalone.
 2. Verdicts recorded in this document.
