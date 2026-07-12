@@ -14,6 +14,8 @@
 ### along with this program; if not, write to the Free Software
 ### Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
+import os
+
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
@@ -158,7 +160,8 @@ class MeldWindow(QMainWindow):
         self.prefs = prefs
         self._doc_for_widget = {}
         self._current_doc = None
-        self.dam = None                 # DocActionManager, wired in T3.7
+        self._current_connections = []
+        self._transient_pumps = []
 
         self.setWindowTitle("Meld")
         self.resize(prefs.window_size_x, prefs.window_size_y)
@@ -174,6 +177,7 @@ class MeldWindow(QMainWindow):
         self._build_menus()
         self._build_toolbar()
         self._build_statusbar()
+        self.dam = DocActionManager(self)
 
         self.pump = SchedulerPump(self)
         self.pump.status_message.connect(self.set_task_status)
@@ -427,7 +431,7 @@ class MeldWindow(QMainWindow):
         )
         QMessageBox.about(self, _("About Meld"), html)
 
-    # ----- tab helpers (fleshed out in T3.7) --------------------------------
+    # ----- tab lifecycle ----------------------------------------------------
 
     def current_doc(self):
         return self._doc_for_widget.get(self.tabs.currentWidget(), _DUMMY_DOC)
@@ -445,18 +449,84 @@ class MeldWindow(QMainWindow):
         if doc is not None:
             self.try_remove_page(doc)
 
+    def _connect(self, signal, slot):
+        signal.connect(slot)
+        self._current_connections.append((signal, slot))
+
+    def _disconnect_current(self):
+        for signal, slot in self._current_connections:
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
+        self._current_connections = []
+
     def _on_current_tab_changed(self, index):
+        old = self._current_doc
+        if old is not None:
+            old.on_container_switch_out_event()
+            self._disconnect_current()
+
         if index < 0:
+            self._current_doc = None
+            self.dam.set_doc(None)
+            self.pump.set_scheduler(None)
             self.setWindowTitle("Meld")
+            for action in (self.action_undo, self.action_redo,
+                           self.action_prev_change, self.action_next_change):
+                action.setEnabled(False)
             return
+
         doc = self._doc_for_widget.get(self.tabs.widget(index))
         if doc is None:
+            self._current_doc = None
             return
+        self._current_doc = doc
+        self.action_undo.setEnabled(doc.undosequence.can_undo())
+        self.action_redo.setEnabled(doc.undosequence.can_redo())
+        self._connect(doc.undosequence.can_undo_changed, self.action_undo.setEnabled)
+        self._connect(doc.undosequence.can_redo_changed, self.action_redo.setEnabled)
+        self._connect(doc.next_diff_changed, self._on_next_diff_changed)
         self.setWindowTitle(f"{self.tabs.tabText(index)} - Meld")
+        self.set_doc_status("")
+        self.dam.set_doc(doc)
+        self.pump.set_scheduler(doc.scheduler)
+        doc.on_container_switch_in_event()
+
+    def _on_next_diff_changed(self, have_prev, have_next):
+        self.action_prev_change.setEnabled(have_prev)
+        self.action_next_change.setEnabled(have_next)
+
+    def _append_page(self, doc, icon_name):
+        self._doc_for_widget[doc.widget] = doc
+        self.tabs.addTab(doc.widget, QIcon.fromTheme(icon_name), doc.label_text)
+        self.tabs.setCurrentWidget(doc.widget)
+        doc.label_changed.connect(lambda text, d=doc: self.on_label_changed(d, text))
+        doc.file_changed.connect(lambda fn, d=doc: self.on_file_changed_broadcast(d, fn))
+        doc.create_diff.connect(self.append_diff)
+        doc.status_changed.connect(self.set_doc_status)
+
+    def on_label_changed(self, doc, text):
+        idx = self.tabs.indexOf(doc.widget)
+        if idx >= 0:
+            self.tabs.setTabText(idx, text)
+            self.tabs.setTabToolTip(idx, text)
+            if idx == self.tabs.currentIndex():
+                self.setWindowTitle(f"{text} - Meld")
+
+    def on_file_changed_broadcast(self, source_doc, filename):
+        for doc in self._doc_for_widget.values():
+            if doc is not source_doc:
+                doc.on_file_changed(filename)
 
     def try_remove_page(self, doc, appquit=False):
         resp = doc.on_delete_event(appquit)
         if resp != CloseResponse.CANCEL:
+            if doc is self._current_doc:
+                self.dam.set_doc(None)
+                self.pump.set_scheduler(None)
+                self._disconnect_current()
+                self._current_doc = None
             idx = self.tabs.indexOf(doc.widget)
             if idx >= 0:
                 self.tabs.removeTab(idx)
@@ -466,9 +536,117 @@ class MeldWindow(QMainWindow):
                 self.setWindowTitle("Meld")
         return resp
 
+    # ----- comparison factories (lazy doc imports) --------------------------
+
+    def _unavailable(self, exc):
+        QMessageBox.warning(
+            self, "Meld",
+            _("This comparison type is not available yet: %s") % exc)
+
+    def append_dirdiff(self, dirs, auto_compare=False):
+        assert len(dirs) in (1, 2, 3)
+        try:
+            from meldq import dirdiff
+        except ImportError as exc:
+            self._unavailable(exc)
+            return None
+        doc = dirdiff.DirDiff(self.prefs, len(dirs))
+        self._append_page(doc, "tree-folder-normal")
+        doc.set_locations(dirs)
+        # FIXME: This doesn't work, as dirdiff behaves differently to vcview
+        if auto_compare:
+            doc.on_button_diff_clicked(None)
+        return doc
+
+    def append_filediff(self, files):
+        assert len(files) in (1, 2, 3, 4)
+        try:
+            from meldq import filediff, filemerge
+        except ImportError as exc:
+            self._unavailable(exc)
+            return None
+        if len(files) == 4:
+            doc = filemerge.FileMerge(self.prefs, 3)
+        else:
+            doc = filediff.FileDiff(self.prefs, len(files))
+        doc.undosequence.clear()
+        self._append_page(doc, "tree-file-normal")
+        doc.set_files(files)
+        return doc
+
+    def append_diff(self, paths, auto_compare=False):
+        dirslist = [p for p in paths if os.path.isdir(p)]
+        fileslist = [p for p in paths if os.path.isfile(p)]
+        if dirslist and fileslist:
+            # build a file list appending the previous filename to dirs (like diff)
+            lastfilename = fileslist[0]
+            builtfilelist = []
+            for elem in paths:
+                if os.path.isdir(elem):
+                    builtfilename = os.path.join(elem, lastfilename)
+                    if os.path.isfile(builtfilename):
+                        elem = builtfilename
+                    else:
+                        QMessageBox.warning(
+                            self, "Meld",
+                            _("Cannot compare a mixture of files and directories.\n"))
+                        return
+                else:
+                    lastfilename = os.path.basename(elem)
+                builtfilelist.append(elem)
+            return self.append_filediff(builtfilelist)
+        elif dirslist:
+            return self.append_dirdiff(paths, auto_compare)
+        else:
+            return self.append_filediff(paths)
+
+    def append_vcview(self, locations, auto_compare=False):
+        assert len(locations) in (1,)
+        try:
+            from meldq import vcview
+        except ImportError as exc:
+            self._unavailable(exc)
+            return None
+        doc = vcview.VcView(self.prefs)
+        self._append_page(doc, "vc-icon")
+        doc.set_location(locations[0])
+        if auto_compare:
+            doc.on_button_diff_clicked(None)
+        return doc
+
+    def _single_file_open(self, path):
+        try:
+            from meldq import vcview
+        except ImportError as exc:
+            self._unavailable(exc)
+            return
+        doc = vcview.VcView(self.prefs)
+        pump = SchedulerPump(self)
+        entry = (pump, doc)
+        self._transient_pumps.append(entry)
+
+        def on_idle(idle):
+            if idle:
+                pump.stop()
+                if entry in self._transient_pumps:
+                    self._transient_pumps.remove(entry)
+
+        pump.idle_changed.connect(on_idle)
+        pump.set_scheduler(doc.scheduler)
+        doc.create_diff.connect(self.append_diff)
+        doc.run_diff([path])
+
     def open_paths(self, paths, auto_compare=False):
-        # fully implemented in T3.7
-        pass
+        tab = None
+        if len(paths) == 1:
+            a = paths[0]
+            if os.path.isfile(a):
+                self._single_file_open(a)
+            else:
+                tab = self.append_vcview([a], auto_compare)
+        elif len(paths) in (2, 3, 4):
+            tab = self.append_diff(paths, auto_compare)
+        return tab
 
     def closeEvent(self, event):
         for i in range(self.tabs.count() - 1, -1, -1):
@@ -486,3 +664,90 @@ class MeldWindow(QMainWindow):
             self._geometry_save_timer.stop()
             self._save_geometry()
         event.accept()
+
+
+class DocActionManager(QObject):
+    """Replaces gtk.UIManager per-tab merging.
+
+    Populates each menu's named placeholder section and the toolbar's doc
+    segment from the current doc's menu_contributions()/toolbar_contributions()
+    on tab switch. Contributed actions stay parented to the doc widget; a
+    removeAction here just makes them inert, so their shortcuts fire only
+    while the doc is current.
+    """
+
+    MENU_KEYS = ("file", "edit", "changes", "view")
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+
+    def set_doc(self, doc):
+        window = self.window
+        for key in self.MENU_KEYS:
+            self._clear_section(window.menus[key],
+                                f"doc_section_start_{key}", f"doc_section_end_{key}")
+        self._clear_section(window.toolbar, "doc_toolbar_start", "doc_toolbar_end")
+        if doc is None:
+            return
+
+        contributions = doc.menu_contributions()
+        for key in self.MENU_KEYS:
+            menu = window.menus[key]
+            section = self._materialize(menu, contributions.get(key, []))
+            start = self._find(menu, f"doc_section_start_{key}")
+            end = self._find(menu, f"doc_section_end_{key}")
+            menu.insertActions(end, section)
+            start.setVisible(bool(section))
+            end.setVisible(bool(section))
+
+        tb_section = self._materialize(window.toolbar, doc.toolbar_contributions())
+        tb_start = self._find(window.toolbar, "doc_toolbar_start")
+        tb_end = self._find(window.toolbar, "doc_toolbar_end")
+        window.toolbar.insertActions(tb_end, tb_section)
+        tb_start.setVisible(bool(tb_section))
+        tb_end.setVisible(bool(tb_section))
+
+        self._assert_no_shortcut_collision(doc)
+
+    @staticmethod
+    def _find(widget, object_name):
+        for action in widget.actions():
+            if action.objectName() == object_name:
+                return action
+        return None
+
+    def _clear_section(self, widget, start_name, end_name):
+        actions = widget.actions()
+        start = self._find(widget, start_name)
+        end = self._find(widget, end_name)
+        if start is None or end is None:
+            return
+        for action in actions[actions.index(start) + 1:actions.index(end)]:
+            widget.removeAction(action)
+
+    @staticmethod
+    def _materialize(parent, section):
+        result = []
+        for action in section:
+            if action is None:      # §2.4: None -> separator (insertActions rejects None)
+                separator = QAction(parent)
+                separator.setSeparator(True)
+                result.append(separator)
+            else:
+                result.append(action)
+        return result
+
+    def _assert_no_shortcut_collision(self, doc):
+        shell = set()
+        for name in dir(self.window):
+            if name.startswith("action_"):
+                shortcut = getattr(self.window, name).shortcut()
+                if not shortcut.isEmpty():
+                    shell.add(shortcut.toString())
+        for action in doc.doc_actions():
+            shortcut = action.shortcut()
+            if not shortcut.isEmpty():
+                assert shortcut.toString() not in shell, (
+                    f"doc action shortcut {shortcut.toString()} "
+                    "collides with a shell action")
