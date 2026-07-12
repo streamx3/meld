@@ -173,6 +173,66 @@ class DiffTreeModel(QStandardItemModel):
         item = self.itemFromIndex(index.siblingAtColumn(pane))
         return item.data(ROLE_STATE)
 
+    # ----- row addressing / traversal ---------------------------------------
+    #
+    # Indexes yielded by the generators and tuples from rowpath() are only
+    # stable while the model is unmodified; a consumer mutating rows mid-
+    # iteration must convert to QPersistentModelIndex first.
+
+    def rowpath(self, index):
+        path = []
+        while index.isValid():
+            path.append(index.row())
+            index = index.parent()
+        return tuple(reversed(path))
+
+    def index_for_rowpath(self, path):
+        idx = QModelIndex()
+        for row in path:
+            idx = self.index(row, 0, idx)
+            if not idx.isValid():
+                return QModelIndex()
+        return idx
+
+    def inorder_search_down(self, it):
+        while it.isValid():
+            child = self.index(0, 0, it)
+            if child.isValid():
+                it = child
+            else:
+                nxt = self.index(it.row() + 1, 0, it.parent())
+                if nxt.isValid():
+                    it = nxt
+                else:
+                    while True:
+                        it = it.parent()
+                        if it.isValid():
+                            nxt = self.index(it.row() + 1, 0, it.parent())
+                            if nxt.isValid():
+                                it = nxt
+                                break
+                        else:
+                            return          # PEP 479: was raise StopIteration
+            yield it
+
+    def inorder_search_up(self, it):
+        while it.isValid():
+            if it.row() > 0:                # has a previous sibling
+                it = self.index(it.row() - 1, 0, it.parent())
+                while True:
+                    nc = self.rowCount(it)
+                    if nc:
+                        it = self.index(nc - 1, 0, it)
+                    else:
+                        break
+            else:
+                up = it.parent()
+                if up.isValid():
+                    it = up
+                else:
+                    return                  # PEP 479: was raise StopIteration
+            yield it
+
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if index.isValid() and index.column() < self.ntree:
             state = super().data(index, ROLE_STATE)

@@ -83,3 +83,38 @@ def test_extra_columns_are_plain(qapp):
     # extra columns carry no state styling
     extra = idx.siblingAtColumn(1)
     assert model.data(extra, Qt.ItemDataRole.FontRole) is None
+
+
+def _fixture_tree():
+    # A(A0, A1(A1a)), B, C(C0)
+    model = DiffTreeModel(ntree=1)
+    a = model.add_entries(None, ["A"])
+    model.add_entries(a, ["A0"])
+    a1 = model.add_entries(a, ["A1"])
+    model.add_entries(a1, ["A1a"])
+    model.add_entries(None, ["B"])
+    c = model.add_entries(None, ["C"])
+    model.add_entries(c, ["C0"])
+    return model, a
+
+
+def test_search_down_terminates(qapp):
+    model, a = _fixture_tree()
+    order = [model.rowpath(i) for i in model.inorder_search_down(a)]
+    assert order == [(0, 0), (0, 1), (0, 1, 0), (1,), (2,), (2, 0)]
+
+
+def test_search_up_terminates(qapp):
+    model, _ = _fixture_tree()
+    c0 = model.index_for_rowpath((2, 0))
+    order = [model.rowpath(i) for i in model.inorder_search_up(c0)]
+    assert order == [(2,), (1,), (0, 1, 0), (0, 1), (0, 0), (0,)]
+
+
+def test_rowpath_roundtrip(qapp):
+    model, _ = _fixture_tree()
+    for rp in [(0,), (0, 0), (0, 1), (0, 1, 0), (1,), (2,), (2, 0)]:
+        idx = model.index_for_rowpath(rp)
+        assert idx.isValid()
+        assert model.rowpath(idx) == rp
+    assert not model.index_for_rowpath((9, 9)).isValid()
