@@ -1,0 +1,37 @@
+{
+ "description": "non-overlapping edits merge cleanly",
+ "base": [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6"
+ ],
+ "local": [
+  "ONE",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6"
+ ],
+ "remote": [
+  "1",
+  "2",
+  "3",
+  "4",
+  "FIVE",
+  "6"
+ ],
+ "merged_lines": [
+  "ONE",
+  "2",
+  "3",
+  "4",
+  "FIVE",
+  "6"
+ ],
+ "unresolved": [],
+ "diff3_check": true
+}

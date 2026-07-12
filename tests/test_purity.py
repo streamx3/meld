@@ -18,12 +18,12 @@ MELDQ_DIR = Path(__file__).resolve().parent.parent / "meldq"
 
 NO_QT_MODULES = [
     "meldq.engine.matchers",
-    "meldq.engine.merge",
     "meldq.engine.task",
     "meldq.util.misc",
 ]
 QTCORE_ONLY_MODULES = [
     "meldq.engine.diffutil",
+    "meldq.engine.merge",
     "meldq.engine.undo",
 ]
 

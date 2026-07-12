@@ -1,0 +1,25 @@
+{
+ "description": "identical edit on both sides applied once, no conflict",
+ "base": [
+  "a",
+  "b",
+  "c"
+ ],
+ "local": [
+  "a",
+  "EDIT",
+  "c"
+ ],
+ "remote": [
+  "a",
+  "EDIT",
+  "c"
+ ],
+ "merged_lines": [
+  "a",
+  "EDIT",
+  "c"
+ ],
+ "unresolved": [],
+ "diff3_check": false
+}

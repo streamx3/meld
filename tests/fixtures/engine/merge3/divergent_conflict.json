@@ -1,0 +1,27 @@
+{
+ "description": "overlapping divergent edit leaves a conflict marker",
+ "base": [
+  "a",
+  "b",
+  "c"
+ ],
+ "local": [
+  "a",
+  "X",
+  "c"
+ ],
+ "remote": [
+  "a",
+  "Y",
+  "c"
+ ],
+ "merged_lines": [
+  "a",
+  "(??)b",
+  "c"
+ ],
+ "unresolved": [
+  1
+ ],
+ "diff3_check": false
+}
