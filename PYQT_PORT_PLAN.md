@@ -2,6 +2,7 @@
 
 **Target executor: Claude Opus 4.8 (or equivalent agent), working in this repository.**
 **Decision record and survey background: [PYQT_MIGRATION_PLAN.md](PYQT_MIGRATION_PLAN.md) — read it first, once, in full.**
+**▶ EXECUTION STATUS, environment, gotchas, and plan corrections: [PYQT_PORT_PROGRESS.md](PYQT_PORT_PROGRESS.md) — read this BEFORE resuming. WP0–WP4 + WP6 are done; WP5/WP7/WP8/WP9 remain.**
 
 ## 0. Read this first (operating instructions for the executing agent)
 
