@@ -21,25 +21,23 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.12 done (VcView functionally complete: scan/actions/command+diff/commit); **resume at T7.13** (purity/tools/wiring/smoke) |
+| WP7 | **Version control (vcview + vc/ plugins)** | ✅ **done** — T7.1–T7.13 (plugins, registry, VcView, commit dialog, purity/wiring/smoke) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**389 tests pass, 4 skipped** as of WP7.12. Test count grows per task.
+**392 tests pass, 4 skipped** as of WP7.13 (**WP7 complete**). Test count grows per task.
 
-WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton), T7.9 (scan/filters/
-`next_diff`/selection) and T7.10 (10 command actions, `update_actions_sensitivity`,
-doc/menu/toolbar contributions, context menu, **and the command-execution pipeline**
-`_command_iter`/`_command`/`_command_on_selected` + `_surface_warnings`) are done in
-`meldq/vcview.py`. **Re-slice vs plan:** T7.10 pulled in the command half of T7.11
-(the buttons were otherwise dead), so **T7.11 is reduced to the diff/patch-viewing
-half** — `run_diff_iter` + `show_patch` (replace the interim `run_diff` create_diff
-stub). T7.11 (real `run_diff`/`run_diff_iter`/`show_patch`) is done — verified end-to-end
-against real git + `/usr/bin/patch`. **T7.12 CommitDialog is done** — built in CODE
-(project convention, not a Designer `.ui`; it embeds a promoted `HistoryCombo`), with an
-injectable `settings` so tests isolate history. So **VcView is functionally complete**;
-only **T7.13** (purity guard, real-tool matrix, MeldWindow wiring test, manual smoke)
-remains in WP7. Key trap honored throughout:
+**WP7 is DONE.** `meldq/vcview.py` holds the full VcView: T7.8 (`VcTreeModel`, skeleton),
+T7.9 (scan/filters/`next_diff`/selection), T7.10 (10 command actions,
+`update_actions_sensitivity`, doc/menu/toolbar contributions, context menu, **and the
+command-execution pipeline** `_command_iter`/`_command`/`_command_on_selected` +
+`_surface_warnings`), T7.11 (`run_diff`/`run_diff_iter`/`show_patch` — verified end-to-end
+vs real git + `/usr/bin/patch`), T7.12 (`CommitDialog`, built in CODE), T7.13 (purity
+guard `test_vc_purity.py`, MeldWindow wiring test `test_vcview_window.py`, `MANUAL_TESTS.md`;
+real-tool matrix already covered per-plugin so no `test_vc_tools.py`). **Re-slice vs plan:**
+T7.10 pulled in T7.11's command half (buttons were otherwise dead), so T7.11 became the
+diff/patch-viewing half only. Every T7.x was adversarially verified via workflows. Key
+trap honored throughout:
 **zero modal dialogs inside generator frames** — command failure, no-differences, and
 patch failure all use a non-modal msgarea; a modal there would re-enter the pump and
 re-enter the generator (ValueError: generator already executing). The `show_patch`
@@ -61,11 +59,15 @@ WP3 shell/scheduler contract. Adversarial verification of the plugins ran as
 workflows (svn: 4 lenses; hg/bzr/cvs/null/registry: 7 lenses).
 
 ### Suggested next work
-WP5 (dirdiff) or WP7 (vcview). Both consume `meldq/widgets/treemodel.py` (done, WP4) and
-the WP3 shell contract (doc_actions/menu_contributions/toolbar_contributions,
-SchedulerPump, MeldDoc). Neither unblocks new dependencies. WP8 needs all three views
-present. Read the relevant WP section of the plan **and this file's "Plan corrections"**
-before starting.
+**WP5 (dirdiff)** is the remaining view — it consumes the same `DiffTreeModel` (WP4) and
+WP3 shell contract that VcView (WP7) just exercised, so `test_vcview_window.py` /
+DocActionManager / SchedulerPump are a working reference. After WP5, **WP8** (i18n
+pipeline, packaging, desktop) can run — it needs all three views present (filediff ✅,
+vcview ✅, dirdiff ⬜) — then **WP9** (hardening/parity audit). Read the relevant WP
+section of the plan **and this file's "Plan corrections"** before starting. Note the
+VcView-era additions to the shell that WP5 mirrors: `append_dirdiff` already has the
+lazy-import fallback (pending the module), and the `get_plugins_metadata()` VC-dir filter
+is what dirdiff uses to hide `.git`/`.svn`/… during directory comparison.
 
 ---
 
