@@ -69,22 +69,34 @@ def test_flatten_toggles_location_column(view, tmp_path):
     assert view.treeview.isColumnHidden(vcview.COL_LOCATION)
 
 
-def test_next_diff_and_selection(view, tmp_path):
+def test_next_diff_navigation(view, tmp_path):
     (tmp_path / "a.txt").write_text("x\n")
+    (tmp_path / "b.txt").write_text("y\n")
     view.set_location(str(tmp_path))
-    view.action_filter_nonvc.setChecked(True)   # show the unversioned file
+    view.action_filter_nonvc.setChecked(True)   # show the unversioned files
     _drain(view)
 
-    # From the root, next_diff(DOWN) lands on the first non-normal row.
-    view.next_diff(Direction.DOWN)
-    selected = view._get_selected_files()
-    assert [os.path.basename(p) for p in selected] == ["a.txt"]
-    assert all(os.path.isabs(p) for p in selected)
+    def sel():
+        return [os.path.basename(p) for p in view._get_selected_files()]
 
-    # Boundary: repeated next_diff past the last row is a silent no-op
-    # (PEP 479 — the traversal generator must return, never raise).
+    # DOWN walks the two non-normal rows in order.
+    view.next_diff(Direction.DOWN)
+    assert sel() == ["a.txt"]
+    assert all(os.path.isabs(p) for p in view._get_selected_files())
+    view.next_diff(Direction.DOWN)
+    assert sel() == ["b.txt"]
+    # UP walks back (exercises inorder_search_up).
+    view.next_diff(Direction.UP)
+    assert sel() == ["a.txt"]
+
+    # Move to the last row, then hammer DOWN: a silent no-op at the boundary
+    # (PEP 479 — the traversal generator returns, never raises) with no
+    # wrap-around back to the top.
+    view.next_diff(Direction.DOWN)
+    assert sel() == ["b.txt"]
     for _ in range(10):
         view.next_diff(Direction.DOWN)
+    assert sel() == ["b.txt"]
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
