@@ -95,13 +95,17 @@ def test_entries_log_add_remove_add(tmp_path):
 
 
 def test_membership_uses_set_not_oneshot_map(tmp_path):
-    # Two known files + two unknown. With the py2 map() iterator the first
-    # `in` test exhausts it, so later known files get re-added as unversioned.
+    # Two known files + two unknown. With the py3 one-shot map() iterator the
+    # FIRST membership test exhausts it, so any known file tested AFTER an
+    # unknown gets re-added as unversioned. The ordering here is load-bearing:
+    # an unknown must precede a known so the buggy code actually misbehaves
+    # (a knowns-first order would pass even against the map() bug). Verified by
+    # mutation: reverting cvsfiles to map() makes this test fail.
     entries = (_entry("known1.c", "0", "dummy timestamp")
                + _entry("known2.c", "0", "dummy timestamp"))
     vc = make_cvs(tmp_path, entries=entries)
     passed_files = [(n, str(tmp_path / n))
-                    for n in ("known1.c", "known2.c", "unknown1.c", "unknown2.c")]
+                    for n in ("unknown1.c", "known1.c", "unknown2.c", "known2.c")]
     _, files = vc._get_dirsandfiles(str(tmp_path), [], passed_files)
 
     # Each known file appears exactly once, keeping its CVS state (NEW) —
