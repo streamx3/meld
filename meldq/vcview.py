@@ -791,9 +791,12 @@ class VcView(MeldDoc):
 
     def _surface_warnings(self):
         # Where plugin warnings (e.g. the cvs .cvsignore compile error, T7.6)
-        # reach the user, replacing the old modal misc.run_dialog.
-        for w in self.vc.warnings:
-            self.msgarea.new_from_text_and_icon("dialog-warning", w)
+        # reach the user, replacing the old modal misc.run_dialog. The msgarea
+        # holds a single message, so join rather than show-then-clobber (which
+        # would drop all but the last warning).
+        if self.vc.warnings:
+            self.msgarea.new_from_text_and_icon(
+                "dialog-warning", "\n".join(self.vc.warnings))
         self.vc.warnings.clear()
 
     # ----- lifecycle --------------------------------------------------------

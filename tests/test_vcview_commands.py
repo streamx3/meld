@@ -27,14 +27,19 @@ def _run_to_result(gen, limit=5000):
 def test_command_iter_streams_and_returns(view, tmp_path):
     view.vc = _null.Vc(str(tmp_path))
     view.label_text = "repo"
-    gen = view._command_iter(["sh", "-c", "echo hello"], [str(tmp_path)], False)
+    # Output token "42" deliberately does NOT appear in the command text, so
+    # asserting it in the console genuinely pins the output-streaming write
+    # (not just the echoed command line).
+    gen = view._command_iter(["sh", "-c", "expr 40 + 2"], [str(tmp_path)], False)
     result = _run_to_result(gen)
     assert result is not None
     workdir, output = result
-    assert output == "hello\n"
+    assert output == "42\n"
+    assert workdir == str(tmp_path)
     console = view.consoleview.toPlainText()
-    assert "hello" in console
-    assert "echo" in console          # the shelljoined command line was echoed
+    assert "expr" in console          # the shelljoined command line was echoed
+    assert "42" in console            # the command OUTPUT was streamed too
+    assert "42" not in "expr 40 + 2"  # sanity: token can't come from the command
 
 
 def test_command_iter_failure_uses_msgarea_not_modal(view, tmp_path):

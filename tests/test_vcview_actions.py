@@ -13,13 +13,22 @@ def view(qapp, qtbot):
 
 
 def test_fifteen_doc_actions(view):
-    assert len(view.doc_actions()) == 15
+    actions = view.doc_actions()
+    # Identity, not just count, so a drop+duplicate can't slip through.
+    assert actions == [
+        view.action_compare, view.action_open, view.action_commit,
+        view.action_update, view.action_add, view.action_add_binary,
+        view.action_remove, view.action_resolved, view.action_revert,
+        view.action_delete_locally, view.action_flatten,
+        view.action_filter_modified, view.action_filter_normal,
+        view.action_filter_nonvc, view.action_filter_ignored]
 
 
 def test_view_menu_contribution(view):
     view_menu = view.menu_contributions()["view"]
     assert view_menu[0] is view.action_flatten
     submenu = view_menu[1].menu()      # the "Version status" QMenu
+    assert "Version status" in submenu.title()
     checkable = [a for a in submenu.actions() if a.isCheckable()]
     assert checkable == [view.action_filter_modified, view.action_filter_normal,
                          view.action_filter_nonvc, view.action_filter_ignored]
