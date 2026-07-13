@@ -19,26 +19,33 @@ untouched behavioral spec.
 | WP2 | Engine (matchers/diffutil/merge/undo/task) + pure util/misc | ✅ done |
 | WP3 | App shell, prefs, CLI, dialogs (T3.1–T3.10) | ✅ done |
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
-| WP5 | **Directory comparison (dirdiff)** | 🟡 T5.1–T5.2 done (treemodel newer-emblem + `_files_same`/filters); **resume at T5.3** (DirDiff skeleton) |
+| WP5 | **Directory comparison (dirdiff)** | 🟡 T5.1–T5.3 done (treemodel newer + `_files_same` + DirDiff skeleton); **resume at T5.5+T5.6** (state computation + scan → populating tree) |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
 | WP7 | **Version control (vcview + vc/ plugins)** | ✅ **done** — T7.1–T7.13 (plugins, registry, VcView, commit dialog, purity/wiring/smoke) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**401 tests pass, 4 skipped** as of WP5.2. Test count grows per task.
+**407 tests pass, 4 skipped** as of WP5.3. Test count grows per task.
 
-**WP5 (dirdiff) started.** T5.1 extended the shared `treemodel.py` with `ROLE_NEWER` +
-`set_newer` + newer-emblem compositing (vcview unaffected — it never sets the role). T5.2
-created `meldq/dirdiff.py`'s Qt-free core: `_files_same` (tri-state, **bytes** read,
-`StatSig` namedtuple cache that fixes 1.4's silently-dead `struct.__cmp__` cache), `clear_cache()`
-(update_regexes must call it — the cache is path-keyed so a filter change needs invalidation),
-`build_text_filters` (`re.M` flag, not the trailing `(?m)` that py3.11 rejects), and
-`build_name_filters`/`TypeFilter`. **Resume at T5.3** = the DirDiff document itself
-(skeleton/layout/model-wiring/pane-switching), which — like VcView — couples tightly with
-T5.5 (state computation) and T5.6 (scan) to make the tree populate; `test_vcview_window.py`
-+ the VcView command/scan structure are the working reference. Note the action-manager
-lazy-import test now simulates the ImportError directly (dirdiff module exists but its
-DirDiff class doesn't until T5.3).
+**WP5 (dirdiff) in progress — T5.1–T5.3 done.** T5.1 extended the shared `treemodel.py`
+(`ROLE_NEWER`/`set_newer`/newer-emblem; vcview unaffected). T5.2 = `meldq/dirdiff.py`'s
+Qt-free core (`_files_same` bytes/tri-state with the `StatSig` namedtuple cache fixing 1.4's
+dead `struct.__cmp__`; `clear_cache`; `build_text_filters` `re.M`; `build_name_filters`/`TypeFilter`).
+**T5.3 = the DirDiff skeleton** (now in `meldq/dirdiff.py`): `DirTreeView`, `DirDiff(MeldDoc)`,
+code-built `QGridLayout`, `_set_model` (reconnects `currentRowChanged` after every `setModel`
+— the AC10 stale-signal fix), `set_num_panes` (explicit show/hide loops, NOT the 1.4 `map`
+no-op), `set_locations`/`on_fileentry_activate`/`refresh`/`recompute_label`, and
+`update_regexes`/`create_name_filters` wired to the T5.2 core.
+
+**Stubs to fill next (documented in the code):** `_update_item_state` (T5.5 — real state
+via `_files_same`), `recursively_update` + `_search_recursively_iter` (T5.6 — the scan; watch
+the `map`-no-op at dirdiff.py:500-501, the case-collision modal needing `scheduler.paused`,
+the accum classes), `on_treeview_cursor_changed`/`on_pane_pressed`/`on_treeview_row_activated`
+(T5.7). **Resume at T5.5+T5.6** — together they make the tree populate (the first
+`test_dirdiff_scan` acceptance). Then T5.4 (actions/contributions), T5.7 (cross-pane sync),
+T5.8 (ops), T5.9 (per-pane DiffMap — `meldq/diffmap.py` already has the `setup(scrollbar,
+chunk_fn)` API), T5.10 (integration). VcView's scan (`meldq/vcview.py`
+`_search_recursively_iter`) is the closest working reference for T5.6.
 
 **WP7 is DONE.** `meldq/vcview.py` holds the full VcView: T7.8 (`VcTreeModel`, skeleton),
 T7.9 (scan/filters/`next_diff`/selection), T7.10 (10 command actions,
