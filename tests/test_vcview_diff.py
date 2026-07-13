@@ -39,6 +39,7 @@ def test_show_patch_success_emits_create_diff(view, tmp_path, monkeypatch):
     assert os.path.basename(destfile) == "foo.c"
     assert os.path.exists(destfile)          # original was reconstructed
     assert view.tempdirs                      # tempdir tracked for cleanup
+    assert destfile.startswith(view.tempdirs[0])   # dest lives in that tempdir
 
 
 def test_show_patch_missing_file_creates_empty(view, tmp_path, monkeypatch):
@@ -83,3 +84,32 @@ def test_run_diff_iter_no_differences(view, tmp_path, monkeypatch):
     assert emitted == []                       # empty patch, nothing opened
     assert view.msgarea.has_message()          # "No differences found."
     assert QApplication.activeModalWidget() is None
+
+
+def test_run_diff_iter_routes_nonempty_patch_to_show_patch(view, tmp_path, monkeypatch):
+    view.vc = _null.Vc(str(tmp_path))
+    view.label_text = "repo"
+    # printf emits output -> a non-empty patch -> show_patch is invoked (the
+    # `if patch:` routing line, otherwise untested).
+    monkeypatch.setattr(view.vc, "diff_command", lambda: ["printf", "PATCHDATA"])
+    calls = []
+    monkeypatch.setattr(view, "show_patch",
+                        lambda prefix, patch: calls.append((prefix, patch)))
+
+    _drain_gen(view.run_diff_iter([str(tmp_path)], empty_patch_ok=True))
+
+    assert len(calls) == 1
+    assert calls[0][1] == "PATCHDATA"          # the collected diff output
+
+
+def test_run_diff_iter_empty_patch_not_ok_emits_per_path(view, tmp_path, monkeypatch):
+    view.vc = _null.Vc(str(tmp_path))
+    view.label_text = "repo"
+    monkeypatch.setattr(view.vc, "diff_command", lambda: ["true"])  # empty output
+    emitted = []
+    view.create_diff.connect(lambda lst: emitted.append(lst))
+
+    # empty patch + empty_patch_ok=False -> the per-path create_diff fallback.
+    _drain_gen(view.run_diff_iter([str(tmp_path)], empty_patch_ok=False))
+
+    assert emitted == [[str(tmp_path)]]
