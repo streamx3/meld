@@ -26,7 +26,26 @@ import os
 import re
 import stat
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QGridLayout,
+    QMessageBox,
+    QTreeView,
+    QWidget,
+)
+
+from meldq.conf import _
+from meldq.diffmap import DiffMap
+from meldq.doc import MeldDoc
 from meldq.util import misc
+from meldq.widgets.historycombo import FileHistoryCombo
+from meldq.widgets.treemodel import (
+    STATE_MODIFIED,
+    STATE_NEW,
+    STATE_NORMAL,
+    DiffTreeModel,
+)
 
 # Stat signature for the content-comparison cache. A namedtuple, NOT the py2
 # misc.struct: struct.__cmp__ (misc.py:150) is dead in py3, so `==` fell back to
@@ -175,3 +194,217 @@ def build_name_filters(filters_pref, on_error=None):
         func = lambda x, r=cregex: r.match(x) is None
         result.append(TypeFilter(item.name, item.active, func))
     return result
+
+
+class DirTreeView(QTreeView):
+    """One of the (up to three) directory panes.
+
+    Holds a back-reference to its DirDiff so a press anywhere (including empty
+    space) can clear the other panes' selections — the `pressed` signal would
+    miss clicks off any row (meld/dirdiff.py:838-841).
+    """
+
+    def __init__(self, dirdiff, parent=None):
+        super().__init__(parent)
+        self._dirdiff = dirdiff
+
+    def mousePressEvent(self, event):
+        self._dirdiff.on_pane_pressed(self)
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        # T5.7 adds the Left/Right cross-pane hop; default handling until then.
+        super().keyPressEvent(event)
+
+
+class DirDiff(MeldDoc):
+    """Two- or three-way directory comparison (port of meld/dirdiff.py).
+
+    WP5.3 lands the skeleton (layout, model wiring, pane switching); the state
+    computation (T5.5), scan generator (T5.6), cross-pane sync (T5.7) and
+    operations (T5.8) fill the methods stubbed here.
+    """
+
+    def __init__(self, prefs, num_panes):
+        super().__init__(prefs)
+
+        self.focus_pane = None
+        self.treeview_focussed = None
+        self.state_filters = [STATE_NORMAL, STATE_MODIFIED, STATE_NEW]
+        self.ignore_case = False
+        self.regexes = []
+        self.name_filters = []
+        self.name_filters_available = []
+        self._syncing = False
+
+        self.widget = QWidget()
+        self.treeview = [DirTreeView(self) for _ in range(3)]
+        self.fileentry = [
+            FileHistoryCombo(history_id="dir_comparison", directory_entry=True)
+            for _ in range(3)]
+        # DiffMaps (T5.9 wires setup); linkmaps are plain 50px spacers — in 1.4
+        # dirdiff they are blank and their glade scroll wiring is dead.
+        self.diffmap = [DiffMap(), DiffMap()]
+        self.linkmap = [QWidget(), QWidget()]
+        for spacer in self.linkmap:
+            spacer.setFixedWidth(50)
+
+        self._build_ui()
+
+        for view in self.treeview:
+            view.setHeaderHidden(True)
+            view.setSelectionMode(
+                QAbstractItemView.SelectionMode.ExtendedSelection)
+            view.setSelectionBehavior(
+                QAbstractItemView.SelectionBehavior.SelectRows)
+            view.setUniformRowHeights(True)
+            # The row-activation handler (T5.7) owns dir expand/collapse; Qt's
+            # default double-click-expands would toggle it a second time.
+            view.setExpandsOnDoubleClick(False)
+            view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            view.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            view.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+            view.activated.connect(self.on_treeview_row_activated)
+
+        self.create_name_filters()
+        self.set_num_panes(num_panes)
+        self.update_regexes()
+
+    def _build_ui(self):
+        # Columns: diffmap0 | pane0 | spacer0 | pane1 | spacer1 | pane2 | diffmap1
+        grid = QGridLayout(self.widget)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        for pane in range(3):
+            grid.addWidget(self.fileentry[pane], 0, 1 + pane * 2)
+        grid.addWidget(self.diffmap[0], 1, 0)
+        grid.addWidget(self.treeview[0], 1, 1)
+        grid.addWidget(self.linkmap[0], 1, 2)
+        grid.addWidget(self.treeview[1], 1, 3)
+        grid.addWidget(self.linkmap[1], 1, 4)
+        grid.addWidget(self.treeview[2], 1, 5)
+        grid.addWidget(self.diffmap[1], 1, 6)
+        for col in (1, 3, 5):
+            grid.setColumnStretch(col, 1)
+
+    # ----- model wiring / pane count ----------------------------------------
+
+    def _set_model(self, model):
+        """Attach a fresh model to the first ntree views.
+
+        setModel replaces each view's QItemSelectionModel and un-hides its
+        columns, so ALL selection wiring and column hiding lives here, not in
+        __init__ — set_num_panes rebuilds the model on every comparison, and
+        wiring only in __init__ would go stale after the second one.
+        """
+        self.model = model
+        for i in range(model.ntree):
+            view = self.treeview[i]
+            view.setModel(model)
+            view.setTreePosition(i)             # column i is the tree column
+            for col in range(model.columnCount()):
+                view.setColumnHidden(col, col != i)
+            view.selectionModel().currentRowChanged.connect(
+                self.on_treeview_cursor_changed)
+
+    def set_num_panes(self, n):
+        if n != self.num_panes and n in (1, 2, 3):
+            self._set_model(DiffTreeModel(n))
+            # Explicit loops, NOT map(...) — map is lazy in py3, so 1.4's
+            # `map(lambda x: x.show(), toshow)` (dirdiff.py:863/:866) is a
+            # silent no-op that would leave pane switching broken.
+            toshow = (self.treeview[:n] + self.fileentry[:n]
+                      + self.linkmap[:n - 1] + self.diffmap[:n])
+            for widget in toshow:
+                widget.show()
+            tohide = (self.treeview[n:] + self.fileentry[n:]
+                      + self.linkmap[n - 1:] + self.diffmap[n:])
+            for widget in tohide:
+                widget.hide()
+            if self.num_panes != 0:             # not the first time through
+                self.num_panes = n
+                self.on_fileentry_activate(None)
+            else:
+                self.num_panes = n
+
+    # ----- locations / label ------------------------------------------------
+
+    def set_locations(self, locations):
+        self.set_num_panes(len(locations))
+        locations = [os.path.abspath(loc or ".") for loc in locations]
+        self.model.removeRows(0, self.model.rowCount())
+        for pane, loc in enumerate(locations):
+            self.fileentry[pane].set_filename(loc)
+            self.fileentry[pane].prepend_history(loc)
+        child = self.model.add_entries(None, locations)
+        self.treeview[0].setFocus()
+        self._update_item_state(child)
+        self.recompute_label()
+        self.scheduler.remove_all_tasks()
+        self.recursively_update((0,))
+
+    def on_fileentry_activate(self, *args):
+        # set_num_panes calls this with None; accept zero meaningful args.
+        locations = [self.fileentry[pane].get_full_path()
+                     for pane in range(self.num_panes)]
+        self.set_locations(locations)
+
+    def refresh(self):
+        root = self.model.index(0, 0)
+        if root.isValid():
+            self.set_locations(self.model.value_paths(root))
+
+    def recompute_label(self):
+        root = self.model.index(0, 0)
+        filenames = self.model.value_paths(root)
+        shortnames = misc.shorten_names(*filenames)
+        self.label_text = " : ".join(shortnames)
+        self.label_changed.emit(self.label_text)
+
+    # ----- filters (pref -> state; QActions land in T5.4) -------------------
+
+    def update_regexes(self):
+        self.regexes = build_text_filters(
+            self.prefs.regexes, on_error=self._filter_error)
+        clear_cache()       # filters changed -> the content cache is stale
+
+    def create_name_filters(self):
+        self.name_filters_available = build_name_filters(
+            self.prefs.filters, on_error=self._filter_error)
+        self.name_filters = [f for f in self.name_filters_available if f.active]
+
+    def _filter_error(self, value):
+        QMessageBox.warning(
+            self.widget, "Meld",
+            _("Error converting pattern '%s' to regular expression") % value)
+
+    # ----- stubs filled by later tasks --------------------------------------
+
+    def _update_item_state(self, it):
+        # T5.5 computes real states via _files_same; skeleton marks present
+        # panes NORMAL so the root row displays its directory names.
+        for pane in range(self.model.ntree):
+            path = self.model.value_path(it, pane)
+            if path is not None:
+                self.model.set_state(it, pane, STATE_NORMAL,
+                                     isdir=os.path.isdir(path))
+
+    def recursively_update(self, path):
+        # T5.6 adds the scan task; skeleton just purges children and refreshes
+        # the row's own state.
+        it = self.model.index_for_rowpath(path)
+        if not it.isValid():
+            return
+        self.model.removeRows(0, self.model.rowCount(it), it)
+        self._update_item_state(it)
+
+    def on_treeview_cursor_changed(self, *args):
+        pass        # T5.7: status line
+
+    def on_pane_pressed(self, view):
+        pass        # T5.7: clear other panes' selections
+
+    def on_treeview_row_activated(self, index):
+        pass        # T5.7/T5.8: expand dirs / launch a comparison
