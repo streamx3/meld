@@ -21,11 +21,20 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.7 done (all vc/ plugins + registry); **resume at T7.8** (`VcTreeModel`/`VcView`) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.9 done (plugins + registry + VcView scan); **resume at T7.10** (VC actions/menus) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**363 tests pass, 4 skipped** as of WP7.7. Test count grows per task.
+**368 tests pass, 4 skipped** as of WP7.9. Test count grows per task.
+
+WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton — combo/console/splitter)
+and T7.9 (recursive scan generator, filters, `next_diff`, selection) are done in
+`meldq/vcview.py`. Two interim stubs remain for T7.10/T7.11: `run_diff` currently
+just `create_diff.emit`s (T7.11 adds the patch pipeline) and
+`update_actions_sensitivity` is a no-op (T7.10 lands the command actions). Note the
+**git untracked-file quirk** surfaces in the UI: an untracked non-ignored file shows
+as NORMAL (not Unversioned), so the Non-VC/Unversioned filter path is tested via the
+`_null` backend, and git's real Ignored state via the Ignored filter.
 
 WP7 status: the entire **Qt-free vc/ layer is done** — `_vc` base (T7.2), the
 five live plugins git/svn/mercurial/bzr/cvs (T7.3–T7.6), and the `_null`
