@@ -1,0 +1,155 @@
+### Copyright (C) 2002-2005 Stephen Kennedy <stevek@gnome.org>
+
+### Redistribution and use in source and binary forms, with or without
+### modification, are permitted provided that the following conditions
+### are met:
+###
+### 1. Redistributions of source code must retain the above copyright
+###    notice, this list of conditions and the following disclaimer.
+### 2. Redistributions in binary form must reproduce the above copyright
+###    notice, this list of conditions and the following disclaimer in the
+###    documentation and/or other materials provided with the distribution.
+
+### THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+### IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+### OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+### IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+### INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+### NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+### DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+### THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+### (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+### THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+import errno
+import os
+import re
+
+from meldq.vc import _vc
+
+
+class Vc(_vc.Vc):
+
+    CMD = "svn"
+    NAME = "Subversion"
+    VC_DIR = ".svn"
+    # No root walk: with svn >= 1.7 only the checkout root carries a .svn dir,
+    # so the inherited check_repo_root only detects svn at that root. This
+    # matches Meld 1.4 behavior — do not change it.
+    VC_ROOT_WALK = False
+    PATCH_INDEX_RE = "^Index:(.*)$"
+    state_map = {
+        "?": _vc.STATE_NONE,
+        "A": _vc.STATE_NEW,
+        " ": _vc.STATE_NORMAL,
+        "!": _vc.STATE_MISSING,
+        "I": _vc.STATE_IGNORED,
+        "M": _vc.STATE_MODIFIED,
+        "D": _vc.STATE_REMOVED,
+        "C": _vc.STATE_CONFLICT,
+    }
+
+    # Match order is load-bearing: moved -> vc -> non_vc (see _get_matches).
+    re_status_moved = re.compile(r'^(A) +[+] +- +([?]) +[?] +([^ ].*)$')
+    re_status_vc = re.compile(r'^(.) +\d+ +(\?|(?:\d+)) +[^ ]+ +([^ ].*)$')
+    re_status_non_vc = re.compile(r'^([?]) +([^ ].*)$')
+    re_status_tree_conflict = re.compile(r'^ +> +.*')
+
+    def commit_command(self, message):
+        return [self.CMD, "commit", "-m", message]
+
+    def diff_command(self):
+        return [self.CMD, "diff"]
+
+    def update_command(self):
+        return [self.CMD, "update"]
+
+    def add_command(self, binary=0):
+        return [self.CMD, "add"]
+
+    def remove_command(self, force=0):
+        return [self.CMD, "rm", "--force"]
+
+    def revert_command(self):
+        return [self.CMD, "revert"]
+
+    def resolved_command(self):
+        return [self.CMD, "resolved"]
+
+    def valid_repo(self):
+        if _vc.call([self.CMD, "info"]):
+            return False
+        else:
+            return True
+
+    def _get_matches(self, directory):
+        """return a list of tuples (file_path, status_code, revision)"""
+
+        while True:
+            try:
+                entries = _vc.popen([self.CMD, "status", "-Nv", directory])
+                break
+            except OSError as e:
+                if e.errno != errno.EAGAIN:
+                    raise
+
+        matches = []
+
+        # entries is now a *text* stream; lines retain their trailing "\n".
+        # The status regexes anchor with a non-MULTILINE $, which matches just
+        # before that trailing newline, so behavior is identical to py2 file
+        # iteration — no rstrip needed.
+        for line in entries:
+            # svn-1.6.x changed 'status' command output
+            # adding tree-conflict lines, c.f.:
+            # http://subversion.tigris.org/svn_1.6_releasenotes.html
+            m = self.re_status_tree_conflict.match(line)
+            if m:
+                # skip this line
+                continue
+            # A svn moved file
+            m = self.re_status_moved.match(line)
+            if m:
+                matches.append((m.group(3), m.group(1), m.group(2)))
+                continue
+            # A svn controlled file
+            m = self.re_status_vc.match(line)
+            if m:
+                matches.append((m.group(3), m.group(1), m.group(2)))
+                continue
+            # A new file, unknown to svn
+            m = self.re_status_non_vc.match(line)
+            if m:
+                matches.append((m.group(2), m.group(1), ""))
+                continue
+
+        matches.sort()
+        return matches
+
+    def _get_dirsandfiles(self, directory, dirs, files):
+        retfiles = []
+        retdirs = []
+
+        for match in self._get_matches(directory):
+            name = match[0]
+            isdir = os.path.isdir(name)
+            path = os.path.join(directory, name)
+            rev = match[2]
+            options = ""
+            if isdir:
+                if os.path.exists(path):
+                    state = _vc.STATE_NORMAL
+                else:
+                    # Effectively unreachable: isdir is already False for a
+                    # vanished path, so svn's "!" (missing) dirs fall through
+                    # to the file branch below and surface as STATE_MISSING
+                    # Files. Kept verbatim for 1.4 parity.
+                    state = _vc.STATE_MISSING
+                # svn adds the directory reported to the status list we get.
+                if name != directory:
+                    retdirs.append(_vc.Dir(path, name, state))
+            else:
+                state = self.state_map.get(match[1], _vc.STATE_NONE)
+                retfiles.append(_vc.File(path, name, state, rev, "", options))
+
+        return retdirs, retfiles
