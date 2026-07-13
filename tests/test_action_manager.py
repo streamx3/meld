@@ -118,10 +118,12 @@ def test_close_all_right_to_left(window):
     assert order == ["C", "B", "A"]
 
 
-def test_append_filediff_without_module_warns(window, monkeypatch):
+def test_append_missing_module_warns(window, monkeypatch):
+    # the lazy-import fallback: a comparison type whose module is not yet
+    # ported (vcview, pending WP7) shows a warning instead of crashing
     warnings = []
     monkeypatch.setattr("meldq.app.QMessageBox.warning",
                         lambda *a, **k: warnings.append(a))
-    result = window.append_filediff(["a", "b"])
+    result = window.append_vcview(["some_dir"])
     assert result is None
     assert len(warnings) == 1
