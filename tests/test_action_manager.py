@@ -119,11 +119,21 @@ def test_close_all_right_to_left(window):
 
 
 def test_append_missing_module_warns(window, monkeypatch):
-    # the lazy-import fallback: a comparison type whose module is not yet
-    # ported (dirdiff, pending WP5) shows a warning instead of crashing
+    # The lazy-import fallback: if a comparison module can't be imported, the
+    # shell warns instead of crashing. Simulate an unimportable module so the
+    # test doesn't depend on which comparison views are currently ported.
+    import builtins
+    real_import = builtins.__import__
+
+    def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if "dirdiff" in (fromlist or ()):
+            raise ImportError("simulated missing module")
+        return real_import(name, globals, locals, fromlist, level)
+
     warnings = []
     monkeypatch.setattr("meldq.app.QMessageBox.warning",
                         lambda *a, **k: warnings.append(a))
+    monkeypatch.setattr(builtins, "__import__", failing_import)
     result = window.append_dirdiff(["some_dir"])
     assert result is None
     assert len(warnings) == 1
