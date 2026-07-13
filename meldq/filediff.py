@@ -33,10 +33,11 @@ from PyQt6.QtGui import (
     QIcon,
     QKeySequence,
     QPixmap,
+    QShortcut,
     QTextCharFormat,
     QTextCursor,
 )
-from PyQt6.QtWidgets import QTextEdit
+from PyQt6.QtWidgets import QMenu, QTextEdit
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -321,6 +322,7 @@ class FileDiff(MeldDoc):
 
         self.prefs.changed.connect(self.on_preference_changed)
         self._build_doc_actions()
+        self._wire_interactions()
         self.set_num_panes(num_panes)
 
     # ----- widget construction ---------------------------------------------
@@ -1378,10 +1380,105 @@ class FileDiff(MeldDoc):
                 return cursor.selectedText().replace(_PARAGRAPH, "\n")
         return None
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- cursor status / overwrite ----------------------------------------
 
     def on_cursor_position_changed(self, pane, force=False):
-        pass                    # T6.11
+        view = self.textview[pane]
+        cursor = view.textCursor()
+        pos = cursor.position()
+        if pane == self.cursor.pane and pos == self.cursor.pos and not force:
+            return
+        self.cursor.pane, self.cursor.pos = pane, pos
+        line = cursor.blockNumber()
+        offset = cursor.positionInBlock()
+        insert_overwrite = (_("INS"), _("OVR"))[int(self.textview_overwrite)]
+        line_column = _("Ln %i, Col %i") % (line + 1, offset + 1)
+        status = "%s : %s%s" % (insert_overwrite, line_column,
+                                self._get_custom_status_text())
+        self.status_changed.emit(status)
+        if line != self.cursor.line or force:
+            chunk, prev, nxt = self.linediffer.locate_chunk(pane, line)
+            if chunk != self.cursor.chunk:
+                self.cursor.chunk = chunk
+                self.current_diff_changed.emit()
+            if prev != self.cursor.prev_chunk or nxt != self.cursor.next_chunk:
+                self.next_diff_changed.emit(prev is not None, nxt is not None)
+            self.cursor.prev_chunk, self.cursor.next_chunk = prev, nxt
+        self.cursor.line, self.cursor.offset = line, offset
+
+    def _get_custom_status_text(self):
+        return ""               # FileMerge overrides with the conflict count
+
+    def on_focus_change(self):
+        self.keymask = 0
+
+    def on_container_switch_in_event(self):
+        if self.textview_focussed is not None:
+            self.scheduler.add_task(self.textview_focussed.setFocus)
+
+    # ----- identical-files banners ------------------------------------------
 
     def on_diffs_changed(self):
-        pass                    # T6.11
+        self._set_merge_action_sensitivity()
+        if self.linediffer.sequences_identical():
+            error_message = any(m.has_message() for m in self.msgarea_mgr)
+            if self.num_panes == 1 or error_message:
+                return
+            for index in range(self.num_panes):
+                mgr = self.msgarea_mgr[index]
+                msgarea = mgr.new_from_text_and_icon(
+                    "dialog-information", _("Files are identical"))
+                mgr.set_msg_id(FileDiff.MSG_SAME)
+                label = (misc.gtk_mnemonic_to_qt(_("Hi_de")) if index == 0
+                         else _("Hide"))
+                msgarea.add_stock_button_with_text(
+                    label, "window-close", ResponseId.CLOSE)
+                msgarea.response.connect(self.on_msgarea_identical_response)
+        else:
+            for m in self.msgarea_mgr:
+                if m.get_msg_id() == FileDiff.MSG_SAME:
+                    m.clear()
+
+    def on_msgarea_identical_response(self, *args):
+        for mgr in self.msgarea_mgr:
+            mgr.clear()
+
+    # ----- findbar / context menu -------------------------------------------
+
+    def _wire_interactions(self):
+        for i, view in enumerate(self.textview):
+            view.customContextMenuRequested.connect(
+                functools.partial(self._on_context_menu, i))
+        for entry in self.fileentry:
+            entry.activated.connect(self.on_fileentry_activate)
+        escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), self.widget)
+        escape.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        escape.activated.connect(self.findbar.hide)
+
+    def on_find_activate(self, *args):
+        if self.textview_focussed is not None:
+            self.findbar.start_find(self.textview_focussed)
+
+    def on_find_next_activate(self, *args):
+        if self.textview_focussed is not None:
+            self.findbar.start_find_next(self.textview_focussed)
+
+    def on_replace_activate(self, *args):
+        if self.textview_focussed is not None:
+            self.findbar.start_replace(self.textview_focussed)
+
+    def _on_context_menu(self, pane, pos):
+        view = self.textview[pane]
+        view.setFocus()
+        menu = QMenu(view)
+        menu.addAction(_("Save"), self.save)
+        menu.addAction(_("Save As..."), self.save_as)
+        menu.addSeparator()
+        menu.addAction(self.action_create_patch)
+        menu.addSeparator()
+        menu.addAction(_("Cut"), view.cut)
+        menu.addAction(_("Copy"), view.copy)
+        menu.addAction(_("Paste"), view.paste)
+        menu.addSeparator()
+        menu.addAction(self.action_file_open)
+        menu.exec(view.viewport().mapToGlobal(pos))
