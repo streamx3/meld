@@ -39,9 +39,14 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QTextEdit
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
     QGridLayout,
     QLabel,
     QMessageBox,
+    QPlainTextEdit,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -50,7 +55,7 @@ from PyQt6.QtWidgets import (
 from meldq import conf
 from meldq.conf import _
 from meldq.diffmap import DiffMap
-from meldq.doc import Direction, MeldDoc
+from meldq.doc import RESULT_ERROR, RESULT_OK, CloseResponse, Direction, MeldDoc
 from meldq.engine import diffutil, merge
 from meldq.linkmap import LinkMap
 from meldq.util import misc
@@ -189,6 +194,76 @@ class MeldBufferData:
         self.label = filename
         self.encoding = None
         self.newlines = None
+
+
+class CloseDialog(QDialog):
+    """Save-modified-files prompt (filediff.py:534-561, glade:305-473)."""
+
+    SAVE, CANCEL, DISCARD = 1, 0, 2
+
+    def __init__(self, parent, pane_labels, modified):
+        super().__init__(parent)
+        self.setWindowTitle(_("Save modified files?"))
+        layout = QVBoxLayout(self)
+        prompt = QLabel("<b>%s</b>" % _(
+            "Some files have been modified.\n"
+            "Which ones would you like to save?").replace("\n", "<br>"))
+        prompt.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(prompt)
+        self.checkboxes = []
+        for i, label in enumerate(pane_labels):
+            box = QCheckBox(label)
+            box.setChecked(modified[i])
+            box.setEnabled(modified[i])
+            self.checkboxes.append(box)
+            layout.addWidget(box)
+        buttons = QDialogButtonBox()
+        save = buttons.addButton(misc.gtk_mnemonic_to_qt(_("_Save Selected")),
+                                 QDialogButtonBox.ButtonRole.AcceptRole)
+        cancel = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        discard = buttons.addButton(misc.gtk_mnemonic_to_qt(_("_Discard Changes")),
+                                    QDialogButtonBox.ButtonRole.DestructiveRole)
+        save.clicked.connect(lambda: self.done(self.SAVE))
+        cancel.clicked.connect(lambda: self.done(self.CANCEL))
+        discard.clicked.connect(lambda: self.done(self.DISCARD))
+        layout.addWidget(buttons)
+
+    def checked_panes(self):
+        return [box.isChecked() for box in self.checkboxes]
+
+
+class PatchDialog(QDialog):
+    """Read-only unified-diff viewer (filediff.py:1047-1076, glade:474-586)."""
+
+    def __init__(self, doc, patch_text, font):
+        super().__init__(doc.widget)
+        self._doc = doc
+        self._patch = patch_text
+        self.resize(600, 400)
+        layout = QVBoxLayout(self)
+        self.view = QPlainTextEdit()
+        self.view.setReadOnly(True)
+        self.view.setFont(font)
+        self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.view.setPlainText(patch_text)
+        layout.addWidget(self.view)
+        buttons = QDialogButtonBox()
+        copy = buttons.addButton(_("Copy to Clipboard"),
+                                 QDialogButtonBox.ButtonRole.ActionRole)
+        save = buttons.addButton(QDialogButtonBox.StandardButton.Save)
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        copy.clicked.connect(self._copy)
+        save.clicked.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _copy(self):
+        QApplication.clipboard().setText(self._patch)
+
+    def _save(self):
+        filename = self._doc._get_filename_for_saving(_("Save patch as..."))
+        if filename:
+            self._doc._save_text_to_filename(filename, self._patch.encode("utf-8"))
 
 
 class FileDiff(MeldDoc):
@@ -1142,13 +1217,168 @@ class FileDiff(MeldDoc):
         self.action_delete.setEnabled(bool(delete))
         self._queue_draw()
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- saving -----------------------------------------------------------
 
-    def on_open_activate(self, *args):
-        pass                    # T6.11
+    def _get_filename_for_saving(self, title):
+        filename = QFileDialog.getSaveFileName(self.widget, title)[0]
+        return filename or None
+
+    def _save_text_to_filename(self, filename, text_bytes):
+        try:
+            with open(filename, "wb") as fileobj:
+                fileobj.write(text_bytes)
+        except OSError as e:
+            QMessageBox.critical(
+                self.widget, "Meld",
+                _("Error writing to %s\n\n%s.") % (filename, e))
+            return False
+        return True
+
+    def save_file(self, pane, saveas=False):
+        buf = self.textbuffer[pane]
+        bufdata = self.bufferdata[pane]
+        if saveas or not bufdata.filename:
+            filename = self._get_filename_for_saving(
+                _("Choose a name for buffer %i.") % (pane + 1))
+            if filename:
+                bufdata.filename = bufdata.label = os.path.abspath(filename)
+                self.fileentry[pane].set_filename(bufdata.filename)
+                self.fileentry[pane].prepend_history(bufdata.filename)
+            else:
+                return RESULT_ERROR
+        text = buf.toPlainText()
+        if bufdata.newlines:
+            if isinstance(bufdata.newlines, str):
+                if bufdata.newlines != "\n":
+                    text = text.replace("\n", bufdata.newlines)
+            elif isinstance(bufdata.newlines, tuple):
+                text = self._ask_newline(bufdata, text)
+                if text is None:
+                    return                     # cancelled
+        if bufdata.encoding:
+            try:
+                data = text.encode(bufdata.encoding)
+            except UnicodeEncodeError:
+                if QMessageBox.question(
+                        self.widget, "Meld",
+                        _("'%s' contains characters not encodable with '%s'\n"
+                          "Would you like to save as UTF-8?")
+                        % (bufdata.label, bufdata.encoding)) \
+                        != QMessageBox.StandardButton.Yes:
+                    return RESULT_ERROR
+                # LATENT-BUG FIX: 1.4 fell through without re-encoding.
+                data = text.encode("utf-8")
+                bufdata.encoding = "utf-8"
+        else:
+            data = text.encode("utf-8")
+        if self._save_text_to_filename(bufdata.filename, data):
+            self.file_changed.emit(bufdata.filename)
+            self.undosequence.checkpoint(buf)
+            return RESULT_OK
+        return RESULT_ERROR
+
+    def _ask_newline(self, bufdata, text):
+        labels = {"\n": "UNIX (LF)", "\r\n": "DOS (CR-LF)", "\r": "MAC (CR)"}
+        box = QMessageBox(self.widget)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(_("This file '%s' contains a mixture of line endings.\n\n"
+                      "Which format would you like to use?") % bufdata.label)
+        button_kind = {}
+        for kind in bufdata.newlines:
+            button_kind[box.addButton(
+                labels[kind], QMessageBox.ButtonRole.ActionRole)] = kind
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        kind = button_kind.get(box.clickedButton())
+        if kind is None:
+            return None
+        bufdata.newlines = kind
+        if kind != "\n":
+            text = text.replace("\n", kind)
+        return text
+
+    def save(self):
+        pane = self._get_focused_pane()
+        if pane >= 0:
+            self.save_file(pane)
+
+    def save_as(self):
+        pane = self._get_focused_pane()
+        if pane >= 0:
+            self.save_file(pane, True)
+
+    def save_all(self):
+        for i in range(self.num_panes):
+            if self.bufferdata[i].modified:
+                self.save_file(i)
+
+    # ----- close / patch / reload -------------------------------------------
+
+    def on_delete_event(self, appquit=False):
+        modified = [b.modified for b in self.bufferdata]
+        if not any(modified[:self.num_panes]):
+            return CloseResponse.OK
+        labels = [self._get_pane_label(i) for i in range(self.num_panes)]
+        dialog = CloseDialog(self.widget, labels, modified[:self.num_panes])
+        result = dialog.exec()
+        if result == CloseDialog.SAVE:
+            for i, save in enumerate(dialog.checked_panes()):
+                if save and self.save_file(i) != RESULT_OK:
+                    return CloseResponse.CANCEL
+            return CloseResponse.OK
+        if result == CloseDialog.DISCARD:
+            return CloseResponse.OK
+        return CloseResponse.CANCEL
 
     def make_patch(self, *args):
-        pass                    # T6.10
+        texts = [t for t in self._get_texts(raw=1)]
+        names = [self._get_pane_label(i) for i in range(self.num_panes)]
+        prefix = os.path.commonprefix(names)
+        names = [n[len(prefix):] for n in names]
+        a = [line + "\n" for line in texts[0][:]]
+        b = [line + "\n" for line in texts[1][:]]
+        patch = "".join(difflib.unified_diff(a, b, names[0], names[1]))
+        dialog = PatchDialog(self, patch, self.prefs.get_current_font())
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+
+    def on_reload_activate(self, *extra):
+        modified = [os.path.basename(b.label)
+                    for b in self.bufferdata[:self.num_panes] if b.modified]
+        if modified:
+            message = _("Reloading will discard changes in:\n%s\n\n"
+                        "You cannot undo this operation.") % "\n".join(modified)
+            if QMessageBox.warning(
+                    self.widget, "Meld", message,
+                    QMessageBox.StandardButton.Ok
+                    | QMessageBox.StandardButton.Cancel) \
+                    != QMessageBox.StandardButton.Ok:
+                return
+        files = [b.filename for b in self.bufferdata[:self.num_panes]]
+        self.set_files(files)
+
+    def on_refresh_activate(self, *extra):
+        self.set_files([None] * self.num_panes)
+
+    def on_fileentry_activate(self, *args):
+        if self.on_delete_event() != CloseResponse.CANCEL:
+            files = [e.get_full_path() for e in self.fileentry[:self.num_panes]]
+            self.set_files(files)
+
+    def on_open_activate(self, *args):
+        pane = self._get_focused_pane()
+        if pane >= 0 and self.bufferdata[pane].filename:
+            self._open_files([self.bufferdata[pane].filename])
+
+    def get_selected_text(self):
+        pane = self._get_focused_pane()
+        if pane != -1:
+            cursor = self.textview[pane].textCursor()
+            if cursor.hasSelection():
+                return cursor.selectedText().replace(_PARAGRAPH, "\n")
+        return None
+
+    # ----- stubs completed by later WP6 tasks -------------------------------
 
     def on_cursor_position_changed(self, pane, force=False):
         pass                    # T6.11
