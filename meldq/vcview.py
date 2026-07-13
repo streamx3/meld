@@ -27,12 +27,15 @@ import tempfile
 from importlib import resources
 
 from PyQt6.QtCore import QPersistentModelIndex, Qt
-from PyQt6.QtGui import QAction, QIcon, QTextCursor
+from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
     QHBoxLayout,
-    QInputDialog,
+    QLabel,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -48,7 +51,7 @@ from meldq.conf import _
 from meldq.doc import RESULT_OK, Direction, MeldDoc
 from meldq.util import misc
 from meldq.util.misc import gtk_mnemonic_to_qt
-from meldq.widgets.historycombo import FileHistoryCombo
+from meldq.widgets.historycombo import FileHistoryCombo, HistoryCombo
 from meldq.widgets.msgarea import MsgAreaController, ResponseId
 from meldq.widgets.treemodel import (
     ROLE_PATH,
@@ -670,18 +673,8 @@ class VcView(MeldDoc):
         self._command_on_selected(self.vc.update_command())
 
     def on_button_commit_clicked(self, *args):
-        # WP7.12 replaces this interim with the full CommitDialog (a changed-
-        # files summary + a Previous-Logs history combo). QInputDialog is modal
-        # but runs from a QAction slot (event-loop context), so it is safe.
-        files = self._get_selected_files()
-        if not files:
-            QMessageBox.information(
-                self.widget, "Meld", _("Select some files first."))
-            return
-        msg, ok = QInputDialog.getMultiLineText(
-            self.widget, _("Commit"), _("Log Message"))
-        if ok:
-            self._command_on_selected(self.vc.commit_command(msg))
+        # Modal exec() from a QAction slot (event-loop context) is safe.
+        CommitDialog(self).run()
 
     def on_button_add_clicked(self, *args):
         self._command_on_selected(self.vc.add_command())
@@ -910,3 +903,85 @@ class _ConsoleStream:
             self.textedit.setTextCursor(cursor)
             self.textedit.insertPlainText(s)
             self.textedit.ensureCursorVisible()
+
+
+class CommitDialog(QDialog):
+    """VC commit-message dialog (port of meld/vcview.py:58-85).
+
+    Built in code rather than a Designer .ui — the project's convention (see
+    prefsdialog / NewComparisonDialog); it also embeds a promoted HistoryCombo,
+    which is especially fiddly to hand-author as XML. `settings` is injectable
+    so tests can point the previous-logs history at a temp QSettings.
+    """
+
+    def __init__(self, parent, settings=None):
+        super().__init__(parent.widget.window())
+        self.parent_view = parent
+        self.setWindowTitle(_("VC Log"))
+        self.setMinimumWidth(450)
+
+        layout = QVBoxLayout(self)
+
+        self.groupbox_files = QGroupBox(_("Commit Files"))
+        files_layout = QVBoxLayout(self.groupbox_files)
+        self.changedfiles = QLabel()
+        self.changedfiles.setWordWrap(True)
+        self.changedfiles.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        files_layout.addWidget(self.changedfiles)
+        layout.addWidget(self.groupbox_files)
+
+        self.groupbox_message = QGroupBox(_("Log Message"))
+        message_layout = QVBoxLayout(self.groupbox_message)
+        self.textview = QPlainTextEdit()
+        self.textview.setMinimumSize(320, 200)
+        message_layout.addWidget(self.textview)
+        prev_row = QHBoxLayout()
+        self.previouslogs_label = QLabel(_("Previous Logs"))
+        self.previousentry = HistoryCombo(
+            history_id="previousentry", settings=settings)
+        prev_row.addWidget(self.previouslogs_label)
+        prev_row.addWidget(self.previousentry, 1)
+        message_layout.addLayout(prev_row)
+        layout.addWidget(self.groupbox_message)
+
+        self.buttonbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        self.buttonbox.accepted.connect(self.accept)
+        self.buttonbox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonbox)
+
+        # Changed-files summary (meld/vcview.py:63-66).
+        selected = parent._get_selected_files()
+        topdir = _commonprefix(selected)
+        self.changedfiles.setText(
+            ("(in %s) " % topdir) + " ".join(s[len(topdir):] for s in selected))
+
+        # Previous-logs picker: a read-only line edit (selection only, no typing;
+        # meld/vcview.py:70); picking an entry preloads it into the message.
+        self.previousentry.lineEdit().setReadOnly(True)
+        self.previousentry.activated.connect(
+            lambda _idx: self.textview.setPlainText(
+                self.previousentry.currentText()))
+        if self.previousentry.count():
+            self.previousentry.setCurrentIndex(0)
+
+        self.textview.setFocus()
+        self.textview.selectAll()
+
+        # Ctrl+Return and Ctrl+Enter (keypad) both commit (glade:289-290).
+        QShortcut(QKeySequence("Ctrl+Return"), self, self.accept)
+        QShortcut(QKeySequence("Ctrl+Enter"), self, self.accept)
+
+    def run(self):
+        response = self.exec()
+        msg = self.textview.toPlainText()
+        if response == QDialog.DialogCode.Accepted:
+            self.parent_view._command_on_selected(
+                self.parent_view.vc.commit_command(msg))
+        # Old behavior (meld/vcview.py:80-81): a drafted message is remembered
+        # even on Cancel.
+        if msg.strip():
+            self.previousentry.prepend_text(msg)
+        self.deleteLater()
