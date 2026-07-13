@@ -674,7 +674,7 @@ class MeldWindow(QMainWindow):
 
 
 class DocActionManager(QObject):
-    """Replaces gtk.UIManager per-tab merging.
+    """Replaces the GTK UIManager per-tab merging.
 
     Populates each menu's named placeholder section and the toolbar's doc
     segment from the current doc's menu_contributions()/toolbar_contributions()

@@ -28,13 +28,13 @@ from meldq.engine import task, undo
 RESULT_OK, RESULT_ERROR = (0, 1)
 
 
-class CloseResponse(enum.IntEnum):     # replaces gtk.RESPONSE_* (melddoc.py:126-135)
+class CloseResponse(enum.IntEnum):     # replaces GTK RESPONSE_* (melddoc.py:126-135)
     OK = 0        # doc agrees to close
     CANCEL = 1    # doc vetoes close (and app quit)
     CLOSE = 2     # close without further callbacks (app-quit special case)
 
 
-class Direction(enum.IntEnum):         # replaces gtk.gdk.SCROLL_DOWN/UP (meldapp.py:456-459)
+class Direction(enum.IntEnum):         # replaces GTK SCROLL_DOWN/UP (meldapp.py:456-459)
     DOWN = 1                           # §2.2: THE app-wide direction enum; WP5/WP6/WP7 import it
     UP = -1
 
