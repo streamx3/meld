@@ -21,11 +21,21 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.3 done; **resume at T7.4** (`meldq/vc/svn.py`) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.7 done (all vc/ plugins + registry); **resume at T7.8** (`VcTreeModel`/`VcView`) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**338 tests pass, 1 skipped** as of WP7.3. Test count grows per task.
+**363 tests pass, 4 skipped** as of WP7.7. Test count grows per task.
+
+WP7 status: the entire **Qt-free vc/ layer is done** — `_vc` base (T7.2), the
+five live plugins git/svn/mercurial/bzr/cvs (T7.3–T7.6), and the `_null`
+backend + importlib registry (T7.7). Six dead 1.4 backends (cdv, darcs,
+monotone, rcs, svk, tla) are descoped → fall through to `_null`. What remains
+(T7.8–T7.13) is the **Qt UI**: `VcTreeModel`, `VcView` (combo/console/tree),
+scan generator, VC actions (commit/add/remove/revert/update/diff), commit
+dialog, and MeldWindow integration. All consume `DiffTreeModel` (WP4) + the
+WP3 shell/scheduler contract. Adversarial verification of the plugins ran as
+workflows (svn: 4 lenses; hg/bzr/cvs/null/registry: 7 lenses).
 
 ### Suggested next work
 WP5 (dirdiff) or WP7 (vcview). Both consume `meldq/widgets/treemodel.py` (done, WP4) and
@@ -137,6 +147,12 @@ retarget or update that test once vcview exists).
     only undo *recording* is guarded (WP2). Never apply inline highlights via
     `mergeCharFormat` (mutates the doc → `contentsChange` → re-diff loop); use
     `setExtraSelections` (view-level, no signal).
+11. **Fixtures must not clobber class/module state without restoring it.** The vc parser
+    fixtures first did `git.Vc.check_repo_root = lambda ...` (a *class-level* rebind), which
+    leaked into later files — by the time `test_vc_registry` ran, git/svn "matched" every
+    directory and `get_vcs` returned extra plugins. It passed in isolation, failed in the full
+    suite. Always use `monkeypatch.setattr(Cls, "attr", ...)` (auto-restored) for this, and
+    sanity-check order-independence by running vc test files in a shuffled grouping.
 
 ---
 
@@ -193,6 +209,16 @@ repo). **Quirk kept faithfully, NOT a bug:** the git scan surfaces *ignored* oth
 (`ls-files --others --ignored`), so a plain untracked non-ignored file never enters the tree
 cache and `tree.get(path, STATE_NORMAL)` shows it as NORMAL, not "unversioned" — pinned by
 `test_vc_git.py::test_real_repo_states`.
+`svn.py:112` dead dir-missing branch (a vanished path is never `isdir`, so svn's `!` surfaces
+as a MISSING **File**) — kept verbatim, documented, pinned. `svn` property-only-mod lines and
+CRLF `\r` are *shared quirks* with 1.4, pinned as parity by `test_secondary_column_lines_dropped_parity`.
+`bzr.py:83` `cur_state` UnboundLocalError when the first status line is indented (orphan line
+before any section header) → now `cur_state=None` guard skips it (`test_orphan_indented_line_before_header`).
+`cvs.py` **cluster** (all pinned in `test_vc_cvs.py`): `(?m)` trailing flag = py3.11 re.error;
+one-shot `map()` membership → silent misclassification (now a `set`); `open(...,'U')` removed in
+3.11; stale `state` leak on unknown "dummy timestamp" rev → `STATE_ERROR`; unbound `ignore_re`
+after a bad-`.cvsignore` re.error → `self.warnings` + `_DummyMatcher`. `_null.py:54` / `cvs.py:65`
+`map()` concatenated into `dirs+files` = py3 TypeError → list comprehensions.
 
 ---
 
