@@ -23,6 +23,7 @@ The command pipeline, VC actions and commit dialog follow in WP7.10-7.12.
 
 import os
 import shutil
+import tempfile
 from importlib import resources
 
 from PyQt6.QtCore import QPersistentModelIndex, Qt
@@ -42,7 +43,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from meldq import vc
+from meldq import __version__, vc
 from meldq.conf import _
 from meldq.doc import RESULT_OK, Direction, MeldDoc
 from meldq.util import misc
@@ -722,10 +723,87 @@ class VcView(MeldDoc):
     # ----- command pipeline -------------------------------------------------
 
     def run_diff(self, path_list, empty_patch_ok=False):
-        # WP7.11 replaces this with the diff/patch pipeline (run_diff_iter ->
-        # _command_iter -> show_patch). Until then, open a plain comparison.
         for path in path_list:
-            self.create_diff.emit([path])
+            self.scheduler.add_task(
+                self.run_diff_iter([path], empty_patch_ok).__next__,
+                atfront=True)
+
+    def run_diff_iter(self, path_list, empty_patch_ok):
+        yield _("[%s] Fetching differences") % self.label_text
+        difffunc = self._command_iter(
+            self.vc.diff_command(), path_list, False).__next__
+        diff = None
+        # _command_iter yields status strings / 1s, then finally (workdir, out).
+        while not isinstance(diff, tuple):
+            diff = difffunc()
+            yield 1
+        prefix, patch = diff[0], diff[1]
+        yield _("[%s] Applying patch") % self.label_text
+        if patch:
+            self.show_patch(prefix, patch)
+        elif empty_patch_ok:
+            # Generator context — a non-modal msgarea, never a modal dialog.
+            self.msgarea.new_from_text_and_icon(
+                "dialog-information", _("No differences found."))
+        else:
+            for path in path_list:
+                self.create_diff.emit([path])
+
+    def show_patch(self, prefix, patch):
+        tmpdir = tempfile.mkdtemp("-meld")
+        self.tempdirs.append(tmpdir)
+
+        diffs = []
+        for fname in self.vc.get_patch_files(patch):
+            destfile = os.path.join(tmpdir, fname)
+            destdir = os.path.dirname(destfile)
+
+            if not os.path.exists(destdir):
+                os.makedirs(destdir)
+            pathtofile = os.path.join(prefix, fname)
+            try:
+                shutil.copyfile(pathtofile, destfile)
+            except OSError:      # it is missing, create empty file
+                open(destfile, "w").close()
+            diffs.append((destfile, pathtofile))
+
+        patchcmd = self.vc.patch_command(tmpdir)
+        if misc.write_pipe(patchcmd, patch) == 0:
+            for d in diffs:
+                self.create_diff.emit(list(d))
+        else:
+            # Exact 1.4 msgid (meld/vcview.py:530-551) — do NOT reformat the
+            # whitespace/indentation; the 34 catalogs key off it.
+            msg = _("""
+                    Invoking 'patch' failed.
+                    
+                    Maybe you don't have 'GNU patch' installed,
+                    or you use an untested version of %s.
+                    
+                    Please send email bug report to:
+                    meld-list@gnome.org
+                    
+                    Containing the following information:
+                    
+                    - meld version: '%s'
+                    - source control software type: '%s'
+                    - source control software version: 'X.Y.Z'
+                    - the output of '%s somefile.txt'
+                    - patch command: '%s'
+                    (no need to actually run it, just provide
+                    the command line) 
+                    
+                    Replace 'X.Y.Z' by the actual version for the
+                    source control software you use.
+                    """) % (self.vc.NAME,
+                            __version__,
+                            self.vc.NAME,
+                            " ".join(self.vc.diff_command()),
+                            " ".join(patchcmd))
+            msg = '\n'.join([line.strip() for line in msg.split('\n')])
+            # Generator context: console + non-modal msgarea, never a modal.
+            self.consolestream.write(msg)
+            self.msgarea.new_from_text_and_icon("dialog-error", msg)
 
     def _command_iter(self, command, files, refresh):
         """Run `command` on `files`, streaming output to the console.
