@@ -27,9 +27,11 @@ import types
 
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import (
+    QAction,
     QColor,
     QFontMetricsF,
     QIcon,
+    QKeySequence,
     QPixmap,
     QTextCharFormat,
     QTextCursor,
@@ -49,7 +51,7 @@ from meldq import conf
 from meldq.conf import _
 from meldq.diffmap import DiffMap
 from meldq.doc import Direction, MeldDoc
-from meldq.engine import diffutil
+from meldq.engine import diffutil, merge
 from meldq.linkmap import LinkMap
 from meldq.util import misc
 from meldq.util.misc import ListItem
@@ -243,6 +245,7 @@ class FileDiff(MeldDoc):
             view.horizontalScrollBar().valueChanged.connect(self._sync_hscroll)
 
         self.prefs.changed.connect(self.on_preference_changed)
+        self._build_doc_actions()
         self.set_num_panes(num_panes)
 
     # ----- widget construction ---------------------------------------------
@@ -900,28 +903,255 @@ class FileDiff(MeldDoc):
                     (src, dst), (rect_x, h, pix_width, pix_height), c)
                 break
 
-    # ----- stubs completed by later WP6 tasks -------------------------------
+    # ----- doc/shell action contract ----------------------------------------
+
+    def _build_doc_actions(self):
+        w = self.widget
+
+        def make(text, icon, shortcut, tip, slot):
+            action = QAction(text, w)
+            if icon:
+                action.setIcon(QIcon.fromTheme(icon))
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            action.setStatusTip(tip)
+            action.triggered.connect(slot)
+            return action
+
+        self.action_file_open = make(
+            _("Open selected"), "document-open", None,
+            _("Open selected"), self.on_open_activate)
+        self.action_create_patch = make(
+            _("Create Patch"), None, None,
+            _("Create a patch"), self.make_patch)
+        self.action_push_left = make(
+            _("Push to left"), "go-previous", "Alt+Left",
+            _("Push current change to the left"), lambda: self.push_change(-1))
+        self.action_push_right = make(
+            _("Push to right"), "go-next", "Alt+Right",
+            _("Push current change to the right"), lambda: self.push_change(1))
+        self.action_pull_left = make(
+            _("Pull from left"), "go-last", "Alt+Shift+Right",
+            _("Pull change from the left"), lambda: self.pull_change(-1))
+        self.action_pull_right = make(
+            _("Pull from right"), "go-first", "Alt+Shift+Left",
+            _("Pull change from the right"), lambda: self.pull_change(1))
+        self.action_delete = make(
+            _("Delete"), "edit-delete", "Alt+Delete",
+            _("Delete change"), self.delete_change)
+        self.action_merge_left = make(
+            _("Merge all changes from left"), None, None,
+            _("Merge all non-conflicting changes from the left"),
+            lambda: self.pull_all_non_conflicting_changes(-1))
+        self.action_merge_right = make(
+            _("Merge all changes from right"), None, None,
+            _("Merge all non-conflicting changes from the right"),
+            lambda: self.pull_all_non_conflicting_changes(1))
+        self.action_merge_all = make(
+            _("Merge all non-conflicting"), None, None,
+            _("Merge all non-conflicting changes from left and right panes"),
+            self.merge_all_non_conflicting_changes)
+
+    def doc_actions(self):
+        return [self.action_file_open, self.action_create_patch,
+                self.action_push_left, self.action_push_right,
+                self.action_pull_left, self.action_pull_right, self.action_delete,
+                self.action_merge_left, self.action_merge_right,
+                self.action_merge_all]
+
+    def menu_contributions(self):
+        return {
+            "changes": [self.action_push_left, self.action_push_right,
+                        self.action_pull_left, self.action_pull_right,
+                        self.action_delete, None, self.action_merge_left,
+                        self.action_merge_right, self.action_merge_all],
+            "file": [self.action_create_patch],
+        }
+
+    def toolbar_contributions(self):
+        return [self.action_push_left, self.action_push_right,
+                self.action_pull_left, self.action_pull_right, self.action_delete]
+
+    # ----- chunk operations (QTextCursor -> native undo stack) --------------
 
     def copy_chunk(self, src, dst, chunk, copy_up):
-        pass                    # T6.9
+        b0, b1 = self.textbuffer[src], self.textbuffer[dst]
+        t0 = text_between_lines(b0, chunk[1], chunk[2])
+        if copy_up:
+            if chunk[2] >= b0.blockCount() and chunk[3] < b1.blockCount():
+                t0 = t0 + "\n"
+            insert_text_at_line(b1, chunk[3], t0)
+        else:
+            insert_text_at_line(b1, chunk[4], t0)
 
     def replace_chunk(self, src, dst, chunk):
-        pass                    # T6.9
+        b0, b1 = self.textbuffer[src], self.textbuffer[dst]
+        t0 = text_between_lines(b0, chunk[1], chunk[2])
+        self.undosequence.begin_group(b1)
+        cur = QTextCursor(b1)
+        cur.setPosition(position_at_line_or_eof(b1, chunk[3]))
+        cur.setPosition(position_at_line_or_eof(b1, chunk[4]),
+                        QTextCursor.MoveMode.KeepAnchor)
+        cur.removeSelectedText()
+        insert_text_at_line(b1, chunk[3], t0)
+        self.undosequence.end_group()
 
     def delete_chunk(self, src, chunk):
-        pass                    # T6.9
+        b0 = self.textbuffer[src]
+        start = position_at_line_or_eof(b0, chunk[1])
+        if chunk[2] >= b0.blockCount():
+            start = max(0, start - 1)          # remove the newline before the chunk
+        cur = QTextCursor(b0)
+        cur.setPosition(start)
+        cur.setPosition(position_at_line_or_eof(b0, chunk[2]),
+                        QTextCursor.MoveMode.KeepAnchor)
+        cur.removeSelectedText()
+
+    # ----- merge commands ---------------------------------------------------
+
+    def push_change(self, direction):
+        src = self._get_focused_pane()
+        dst = src + direction
+        chunk = self.linediffer.get_chunk(self.cursor.chunk, src, dst)
+        assert src != -1 and self.cursor.chunk is not None
+        assert dst in (0, 1, 2)
+        assert chunk is not None
+        self.replace_chunk(src, dst, chunk)
+
+    def pull_change(self, direction):
+        dst = self._get_focused_pane()
+        src = dst + direction
+        chunk = self.linediffer.get_chunk(self.cursor.chunk, src, dst)
+        assert dst != -1 and self.cursor.chunk is not None
+        assert src in (0, 1, 2)
+        assert chunk is not None
+        self.replace_chunk(src, dst, chunk)
+
+    def delete_change(self, *args):
+        pane = self._get_focused_pane()
+        chunk = self.linediffer.get_chunk(self.cursor.chunk, pane)
+        assert pane != -1 and self.cursor.chunk is not None
+        assert chunk is not None
+        self.delete_chunk(pane, chunk)
+
+    def _merge_and_replace(self, dst, mergedfile, resync_src):
+        self._sync_vscroll_lock = True
+        self.undosequence.begin_group(self.textbuffer[dst])
+        cur = QTextCursor(self.textbuffer[dst])
+        cur.select(QTextCursor.SelectionType.Document)
+        cur.insertText(mergedfile)             # NOT setPlainText: keeps undo stack
+        self.undosequence.end_group()
+
+        def resync():
+            self._sync_vscroll_lock = False
+            self._sync_vscroll(resync_src)
+        self.scheduler.add_task(resync)
+
+    def pull_all_non_conflicting_changes(self, direction):
+        assert direction in (-1, 1)
+        dst = self._get_focused_pane()
+        src = dst + direction
+        assert src in range(self.num_panes)
+        merger = merge.Merger()
+        merger.differ = self.linediffer
+        merger.texts = [t for t in self._get_texts(raw=1)]
+        mergedfile = None
+        for mergedfile in merger.merge_2_files(src, dst):
+            pass
+        self._merge_and_replace(dst, mergedfile, src)
+
+    def merge_all_non_conflicting_changes(self, *args):
+        dst = 1
+        merger = merge.Merger()
+        merger.differ = self.linediffer
+        merger.texts = [t for t in self._get_texts(raw=1)]
+        mergedfile = None
+        for mergedfile in merger.merge_3_files(False):
+            pass
+        self._merge_and_replace(dst, mergedfile, 0)
+
+    # ----- navigation / sensitivity -----------------------------------------
+
+    def _find_next_chunk(self, direction, pane):
+        if direction == Direction.DOWN:
+            target = self.cursor.next_chunk
+        else:
+            target = self.cursor.prev_chunk
+        if target is None:
+            return None
+        return self.linediffer.get_chunk(target, pane)
+
+    def next_diff(self, direction):
+        pane = self._get_focused_pane()
+        if pane == -1:
+            pane = 1 if len(self.textview) > 1 else 0
+        c = self._find_next_chunk(direction, pane)
+        if c:
+            if self.cursor.line != c[1]:
+                buf = self.textbuffer[pane]
+                cur = QTextCursor(buf)
+                cur.setPosition(buf.findBlockByNumber(c[1]).position())
+                self.textview[pane].setTextCursor(cur)
+            self.textview[pane].ensureCursorVisible()
 
     def _set_merge_action_sensitivity(self):
-        pass                    # T6.9
+        pane = self._get_focused_pane()
+        # 1.4 indexed textview[pane] with pane == -1 (the last pane) when
+        # nothing was focused; has_mergeable_changes(-1) falls into its
+        # which==2 branch. Preserve that behaviour.
+        editable = not self.textview[pane].isReadOnly()
+        mergeable = self.linediffer.has_mergeable_changes(pane)
+        self.action_merge_left.setEnabled(bool(mergeable[0] and editable))
+        self.action_merge_right.setEnabled(bool(mergeable[1] and editable))
+        if self.num_panes == 3 and not self.textview[1].isReadOnly():
+            mergeable = self.linediffer.has_mergeable_changes(1)
+        else:
+            mergeable = (False, False)
+        self.action_merge_all.setEnabled(bool(mergeable[0] or mergeable[1]))
+
+    def _on_current_diff_changed(self, *args):
+        pane = self.cursor.pane
+        chunk_id = self.cursor.chunk
+        push_left = push_right = pull_left = pull_right = delete = True
+        if pane is None or pane == -1 or chunk_id is None:
+            push_left = push_right = pull_left = pull_right = delete = False
+        elif pane == 0 or pane == 2:
+            chunk = self.linediffer.get_chunk(chunk_id, pane)
+            push_left = pane == 2 and chunk[1] != chunk[2]
+            push_right = pane == 0 and chunk[1] != chunk[2]
+            editable = not self.textview[pane].isReadOnly()
+            pull_left = pane == 2 and chunk[3] != chunk[4] and editable
+            pull_right = pane == 0 and chunk[3] != chunk[4] and editable
+            delete = (push_left or push_right) and editable
+        elif pane == 1:
+            chunk0 = self.linediffer.get_chunk(chunk_id, pane, 0)
+            chunk2 = self.linediffer.get_chunk(chunk_id, pane, 2) \
+                if self.num_panes == 3 else None
+            push_left = (chunk0 is not None and chunk0[1] != chunk0[2]
+                         and not self.textview[pane - 1].isReadOnly())
+            push_right = (chunk2 is not None and chunk2[1] != chunk2[2]
+                          and not self.textview[pane + 1].isReadOnly())
+            pull_left = chunk0 is not None and chunk0[3] != chunk0[4]
+            pull_right = chunk2 is not None and chunk2[3] != chunk2[4]
+            delete = ((chunk0 is not None and chunk0[1] != chunk0[2])
+                      or (chunk2 is not None and chunk2[1] != chunk2[2]))
+        self.action_push_left.setEnabled(bool(push_left))
+        self.action_push_right.setEnabled(bool(push_right))
+        self.action_pull_left.setEnabled(bool(pull_left))
+        self.action_pull_right.setEnabled(bool(pull_right))
+        self.action_delete.setEnabled(bool(delete))
+        self._queue_draw()
+
+    # ----- stubs completed by later WP6 tasks -------------------------------
+
+    def on_open_activate(self, *args):
+        pass                    # T6.11
+
+    def make_patch(self, *args):
+        pass                    # T6.10
 
     def on_cursor_position_changed(self, pane, force=False):
         pass                    # T6.11
 
-    def _on_current_diff_changed(self, *args):
-        pass                    # T6.9
-
     def on_diffs_changed(self):
-        pass                    # T6.9 / T6.11
-
-    def next_diff(self, direction):
-        pass                    # T6.9
+        pass                    # T6.11
