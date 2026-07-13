@@ -21,11 +21,11 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.2 done; **resume at T7.3** (`meldq/vc/git.py`) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.3 done; **resume at T7.4** (`meldq/vc/svn.py`) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**318 tests pass, 1 skipped** as of WP6 completion. Test count grows per task.
+**338 tests pass, 1 skipped** as of WP7.3. Test count grows per task.
 
 ### Suggested next work
 WP5 (dirdiff) or WP7 (vcview). Both consume `meldq/widgets/treemodel.py` (done, WP4) and
@@ -186,7 +186,13 @@ None changed a §2 contract.
 dead `set_directory_entry` · `msgarea.py:72` `__actionarea` typo + `:242` mutable default ·
 `findbar.py:88` replace-all infinite loop · `filediff.py:1032` save-as-UTF-8 fallback that
 didn't re-encode · `filediff.py:1214/1219` map-for-side-effects pane show/hide ·
-`filemerge.py:101/106` parenthesized-string membership · UTF-16 inline-offset drift.
+`filemerge.py:101/106` parenthesized-string membership · UTF-16 inline-offset drift ·
+`git.py:85` pre-scan `update-index --refresh` via `popen` (no cwd, never awaited) → ran in
+meld's own dir and read stale status; now `_vc.call([...], cwd=self.location)` (blocks, in
+repo). **Quirk kept faithfully, NOT a bug:** the git scan surfaces *ignored* others only
+(`ls-files --others --ignored`), so a plain untracked non-ignored file never enters the tree
+cache and `tree.get(path, STATE_NORMAL)` shows it as NORMAL, not "unversioned" — pinned by
+`test_vc_git.py::test_real_repo_states`.
 
 ---
 
