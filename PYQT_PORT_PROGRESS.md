@@ -21,11 +21,11 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.10 done (plugins + registry + VcView scan/actions/command pipeline); **resume at T7.11** (run_diff_iter/show_patch) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.11 done (plugins + registry + VcView scan/actions/command+diff pipeline); **resume at T7.12** (CommitDialog) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**376 tests pass, 4 skipped** as of WP7.10. Test count grows per task.
+**380 tests pass, 4 skipped** as of WP7.11. Test count grows per task.
 
 WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton), T7.9 (scan/filters/
 `next_diff`/selection) and T7.10 (10 command actions, `update_actions_sensitivity`,
@@ -34,10 +34,16 @@ doc/menu/toolbar contributions, context menu, **and the command-execution pipeli
 `meldq/vcview.py`. **Re-slice vs plan:** T7.10 pulled in the command half of T7.11
 (the buttons were otherwise dead), so **T7.11 is reduced to the diff/patch-viewing
 half** — `run_diff_iter` + `show_patch` (replace the interim `run_diff` create_diff
-stub). T7.12 CommitDialog is still pending (Commit button uses an interim
-QInputDialog). Key trap honored: **zero modal dialogs inside generator frames** — the
-command failure path uses a dismissable msgarea; a modal there would re-enter the
-pump and re-enter the generator (ValueError: generator already executing).
+stub). T7.11 (real `run_diff`/`run_diff_iter`/`show_patch`) is done — verified end-to-end
+against real git + `/usr/bin/patch`. **T7.12 CommitDialog is the only remaining VcView
+piece** (Commit button uses an interim QInputDialog). Key trap honored throughout:
+**zero modal dialogs inside generator frames** — command failure, no-differences, and
+patch failure all use a non-modal msgarea; a modal there would re-enter the pump and
+re-enter the generator (ValueError: generator already executing). The `show_patch`
+patch-failure msgid is **AST-verified byte-identical** to `meld/vcview.py:530-551` (20-
+space indents, blank-lines-with-20-spaces, the `command line) ` trailing space) so the
+34 catalogs still match — editors strip that whitespace, so re-verify with an AST diff
+if it's ever re-touched.
 Note the **git untracked-file quirk** surfaces in the UI: an untracked non-ignored
 file shows as NORMAL (not Unversioned); Non-VC/Unversioned is tested via `_null`.
 
