@@ -25,7 +25,7 @@ import struct
 import time
 import types
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import (
     QColor,
     QFontMetricsF,
@@ -99,6 +99,13 @@ def utf16_units(s):
     """
     b = s.encode("utf-16-le")
     return struct.unpack("%dH" % (len(b) // 2), b)
+
+
+def current_keymask():
+    """Replaces the GTK key-grab keymask (filediff.py:505-528) with a poll."""
+    mods = QApplication.keyboardModifiers()
+    return ((MASK_SHIFT if mods & Qt.KeyboardModifier.ShiftModifier else 0)
+            | (MASK_CTRL if mods & Qt.KeyboardModifier.ControlModifier else 0))
 
 
 class FakeText:
@@ -200,6 +207,7 @@ class FileDiff(MeldDoc):
         self._inline_cache = set()
         self._inline_ranges = {}
         self._cached_match = CachedSequenceMatcher()
+        self.mouse_chunk = None
         self.cursor = CursorDetails()
         self.linediffer = self.differ()
         self.linediffer.ignore_blanks = self.prefs.ignore_blank_lines
@@ -849,7 +857,59 @@ class FileDiff(MeldDoc):
         self._inline_cache = newcache
         self._cached_match.clean(len(self._inline_cache))
 
+    # ----- linkmap drawing / hit-testing (kept here for FileMerge override) -
+
+    def paint_pixmap_at(self, painter, pixmap, x, y):
+        painter.drawPixmap(int(x), int(y), pixmap)
+
+    def _linkmap_draw_icon(self, painter, which, change, x, f0, t0):
+        keymask = current_keymask()
+        if keymask & MASK_SHIFT:
+            pix0 = pix1 = self.pixmap_delete
+        elif keymask & MASK_CTRL and change[0] not in ("insert", "delete"):
+            pix0, pix1 = self.pixmap_copy0, self.pixmap_copy1
+        else:
+            pix0, pix1 = self.pixmap_apply0, self.pixmap_apply1
+        if change[0] in ("insert", "replace") or (
+                change[0] == "conflict" and change[3] - change[4] != 0):
+            self.paint_pixmap_at(painter, pix1, x, t0)
+        if change[0] in ("delete", "replace") or (
+                change[0] == "conflict" and change[1] - change[2] != 0):
+            self.paint_pixmap_at(painter, pix0, 0, f0)
+
+    def _linkmap_process_event(self, event, which, side, htotal, rect_x,
+                               pix_width, pix_height):
+        src = which + side
+        dst = which + 1 - side
+        linkmap = self.linkmap[which]
+        # line_ypos() is already scroll-adjusted; add the viewport's offset in
+        # linkmap coordinates (the GTK "- adj.value" is already inside it).
+        off_src = linkmap.mapFromGlobal(
+            self.textview[src].viewport().mapToGlobal(QPoint(0, 0))).y()
+        ey = event.position().y()
+        for c in self.linediffer.pair_changes(src, dst):
+            if c[0] == "insert" or (c[0] == "conflict" and c[1] - c[2] == 0):
+                continue
+            h = self.textview[src].line_ypos(c[1]) + off_src
+            if h < 0:
+                continue
+            elif h > htotal:
+                break
+            elif h < ey < h + pix_height:
+                self.mouse_chunk = (
+                    (src, dst), (rect_x, h, pix_width, pix_height), c)
+                break
+
     # ----- stubs completed by later WP6 tasks -------------------------------
+
+    def copy_chunk(self, src, dst, chunk, copy_up):
+        pass                    # T6.9
+
+    def replace_chunk(self, src, dst, chunk):
+        pass                    # T6.9
+
+    def delete_chunk(self, src, chunk):
+        pass                    # T6.9
 
     def _set_merge_action_sensitivity(self):
         pass                    # T6.9
