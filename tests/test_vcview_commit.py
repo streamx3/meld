@@ -50,15 +50,17 @@ def test_previous_entry_readonly(commit_view, settings):
 
 def test_ctrl_return_and_enter_accept(commit_view, settings):
     view, _ = commit_view
-    dlg = vcview.CommitDialog(view, settings=settings)
-    shortcuts = {s.key().toString() for s in dlg.findChildren(QShortcut)}
-    assert {"Ctrl+Return", "Ctrl+Enter"} <= shortcuts
-    accepted = []
-    dlg.accepted.connect(lambda: accepted.append(True))
-    ctrl_return = next(s for s in dlg.findChildren(QShortcut)
-                       if s.key().toString() == "Ctrl+Return")
-    ctrl_return.activated.emit()          # emulate the shortcut firing
-    assert accepted == [True]
+    # Both shortcuts must exist AND each must actually reach accept().
+    for keyname in ("Ctrl+Return", "Ctrl+Enter"):
+        dlg = vcview.CommitDialog(view, settings=settings)
+        shortcuts = {s.key().toString() for s in dlg.findChildren(QShortcut)}
+        assert {"Ctrl+Return", "Ctrl+Enter"} <= shortcuts
+        accepted = []
+        dlg.accepted.connect(lambda: accepted.append(True))
+        sc = next(s for s in dlg.findChildren(QShortcut)
+                  if s.key().toString() == keyname)
+        sc.activated.emit()               # emulate the shortcut firing
+        assert accepted == [True], keyname
 
 
 def test_run_accept_records_commit_command(commit_view, settings, monkeypatch):
@@ -83,19 +85,39 @@ def test_run_cancel_does_not_commit_but_keeps_history(commit_view, settings,
     assert dlg2.previousentry.itemText(0) == "drafted then cancelled"
 
 
-def test_history_persists_and_preloads(commit_view, settings, monkeypatch):
+def test_history_persists_and_preloads(commit_view, settings, tmp_path,
+                                       monkeypatch):
     view, _ = commit_view
     dlg = vcview.CommitDialog(view, settings=settings)
     dlg.textview.setPlainText("a remembered message")
     monkeypatch.setattr(dlg, "exec", lambda: QDialog.DialogCode.Accepted)
     dlg.run()
+    settings.sync()      # flush to disk
 
-    dlg2 = vcview.CommitDialog(view, settings=settings)
+    # A FRESH QSettings reading the same INI proves on-disk persistence, not
+    # just in-memory sharing of one object.
+    fresh = QSettings(str(tmp_path / "history.ini"), QSettings.Format.IniFormat)
+    dlg2 = vcview.CommitDialog(view, settings=fresh)
     assert dlg2.previousentry.itemText(0) == "a remembered message"
-    # selecting index 0 preloads it into the message box
+    assert dlg2.textview.toPlainText() == ""     # NOT preloaded at construction
+    # selecting index 0 is what preloads it into the message box
     dlg2.previousentry.setCurrentIndex(0)
     dlg2.previousentry.activated.emit(0)
     assert dlg2.textview.toPlainText() == "a remembered message"
+
+
+def test_short_message_commits_but_is_not_remembered(commit_view, settings,
+                                                     monkeypatch):
+    # HistoryCombo only stores messages LONGER than 3 chars (MIN_ITEM_LEN); a
+    # short commit still commits but leaves no history entry.
+    view, recorded = commit_view
+    dlg = vcview.CommitDialog(view, settings=settings)
+    dlg.textview.setPlainText("abc")             # <= 3 chars
+    monkeypatch.setattr(dlg, "exec", lambda: QDialog.DialogCode.Accepted)
+    dlg.run()
+    assert recorded == [["true", "commit", "-m", "abc"]]   # still commits
+    dlg2 = vcview.CommitDialog(view, settings=settings)
+    assert dlg2.previousentry.count() == 0                  # nothing remembered
 
 
 def test_on_button_commit_opens_dialog(commit_view, monkeypatch):
