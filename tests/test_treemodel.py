@@ -63,6 +63,28 @@ def test_new_state_icon_present(qapp):
     assert icon is not None and not icon.isNull()
 
 
+def test_newer_emblem_defaults_off_and_composites(qapp):
+    model = DiffTreeModel(ntree=3)
+    idx = model.add_entries(None, ["/a/n", None, None])
+    model.set_state(idx, 0, STATE_NEW)
+    sib = idx.siblingAtColumn(0)
+
+    # By default (no set_newer) the plain base icon is served — vcview, which
+    # never touches ROLE_NEWER, is unaffected.
+    base = model.data(sib, Qt.ItemDataRole.DecorationRole)
+    base_key = base.cacheKey()
+
+    model.set_newer(idx, 0, True)
+    newer = model.data(sib, Qt.ItemDataRole.DecorationRole)
+    assert newer is not None and not newer.isNull()
+    # the composited icon is a distinct object from the base
+    assert newer.cacheKey() != base_key
+
+    # toggling back off restores the base icon
+    model.set_newer(idx, 0, False)
+    assert model.data(sib, Qt.ItemDataRole.DecorationRole).cacheKey() == base_key
+
+
 def test_instance_style_override(qapp):
     m1 = DiffTreeModel(ntree=1)
     m2 = DiffTreeModel(ntree=1)

@@ -31,6 +31,7 @@ from PyQt6.QtGui import (
     QColor,
     QFont,
     QIcon,
+    QPainter,
     QPixmap,
     QStandardItem,
     QStandardItemModel,
@@ -46,6 +47,7 @@ STATE_IGNORED, STATE_NONE, STATE_NORMAL, STATE_NOCHANGE, \
 ROLE_PATH = Qt.ItemDataRole.UserRole + 1    # str | None
 ROLE_STATE = Qt.ItemDataRole.UserRole + 2   # int STATE_*
 ROLE_ISDIR = Qt.ItemDataRole.UserRole + 3   # bool
+ROLE_NEWER = Qt.ItemDataRole.UserRole + 4   # bool; dirdiff "newer" emblem, default False
 
 
 @dataclass(frozen=True)
@@ -113,6 +115,44 @@ def state_icons():
     return _icon_cache
 
 
+_newer_emblem = None
+_newer_icon_cache = {}
+
+
+def _icon_for(state, isdir, newer):
+    """The base (state, isdir) icon, with the "newer" emblem composited on for
+    the dirdiff pane holding the newest copy (replaces EmblemCellRenderer +
+    tree-file-newer.png overlay, meld/dirdiff.py:103/143-147). Lazy + cached."""
+    base = state_icons()[state][1 if isdir else 0]
+    if not newer or base is None:
+        return base
+    key = (state, isdir)
+    cached = _newer_icon_cache.get(key)
+    if cached is not None:
+        return cached
+
+    global _newer_emblem
+    if _newer_emblem is None:
+        icon_dir = resources.files("meldq") / "resources" / "icons"
+        _newer_emblem = QPixmap(str(icon_dir / "tree-file-newer.png")).scaledToWidth(
+            14, Qt.TransformationMode.SmoothTransformation)
+
+    size = 20 if isdir else 14
+    base_pm = base.pixmap(size, size)
+    result = QPixmap(base_pm.size())
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.drawPixmap(0, 0, base_pm)
+    # right edge, vertically centered
+    painter.drawPixmap(max(0, base_pm.width() - _newer_emblem.width()),
+                       max(0, (base_pm.height() - _newer_emblem.height()) // 2),
+                       _newer_emblem)
+    painter.end()
+    icon = QIcon(result)
+    _newer_icon_cache[key] = icon
+    return icon
+
+
 class DiffTreeModel(QStandardItemModel):
     def __init__(self, ntree=3, extra_cols=0, parent=None):
         super().__init__(0, ntree + extra_cols, parent)
@@ -172,6 +212,12 @@ class DiffTreeModel(QStandardItemModel):
     def get_state(self, index, pane):
         item = self.itemFromIndex(index.siblingAtColumn(pane))
         return item.data(ROLE_STATE)
+
+    def set_newer(self, index, pane, newer):
+        # dirdiff: mark the pane holding the newest copy so data() composites
+        # the "newer" emblem onto its icon.
+        item = self.itemFromIndex(index.siblingAtColumn(pane))
+        item.setData(bool(newer), ROLE_NEWER)
 
     # ----- row addressing / traversal ---------------------------------------
     #
@@ -250,5 +296,6 @@ class DiffTreeModel(QStandardItemModel):
                     return font
                 if role == Qt.ItemDataRole.DecorationRole:
                     isdir = bool(super().data(index, ROLE_ISDIR))
-                    return state_icons()[state][1 if isdir else 0]
+                    newer = bool(super().data(index, ROLE_NEWER))
+                    return _icon_for(state, isdir, newer)
         return super().data(index, role)
