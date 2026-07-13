@@ -25,12 +25,15 @@ import os
 import shutil
 from importlib import resources
 
-from PyQt6.QtCore import QModelIndex, QPersistentModelIndex, Qt
+from PyQt6.QtCore import QPersistentModelIndex, Qt
 from PyQt6.QtGui import QAction, QIcon, QTextCursor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QHBoxLayout,
+    QInputDialog,
+    QMenu,
+    QMessageBox,
     QPlainTextEdit,
     QSplitter,
     QToolButton,
@@ -45,7 +48,7 @@ from meldq.doc import RESULT_OK, Direction, MeldDoc
 from meldq.util import misc
 from meldq.util.misc import gtk_mnemonic_to_qt
 from meldq.widgets.historycombo import FileHistoryCombo
-from meldq.widgets.msgarea import MsgAreaController
+from meldq.widgets.msgarea import MsgAreaController, ResponseId
 from meldq.widgets.treemodel import (
     ROLE_PATH,
     STATE_EMPTY,
@@ -161,6 +164,11 @@ class VcView(MeldDoc):
         outer.addWidget(self.splitter, 1)
 
         self._make_filter_actions()
+        self._make_command_actions()
+        self._build_menus()
+        self.treeview.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
+        self.treeview.customContextMenuRequested.connect(self._tree_context_menu)
         self.treeview.setColumnHidden(
             COL_LOCATION, not self.action_flatten.isChecked())
 
@@ -256,9 +264,125 @@ class VcView(MeldDoc):
 
     # ----- VC plugin chooser ------------------------------------------------
 
+    # ----- command actions / contributions ----------------------------------
+
+    def _make_command_actions(self):
+        w = self.widget
+
+        def make(text, bundled, theme, tip, slot):
+            action = QAction(gtk_mnemonic_to_qt(text), w)
+            if theme:
+                action.setIcon(QIcon.fromTheme(theme))
+            elif bundled:
+                action.setIcon(_bundled_icon(bundled))
+            action.setStatusTip(tip)
+            action.triggered.connect(slot)
+            return action
+
+        self.action_compare = make(
+            _("_Compare"), None, "dialog-information", _("Compare selected"),
+            self.on_button_diff_clicked)
+        self.action_open = make(
+            _("Open"), None, "document-open", _("Open selected"),
+            self.on_button_open_clicked)
+        self.action_commit = make(
+            _("_Commit"), "vc-commit-24.png", None, _("Commit"),
+            self.on_button_commit_clicked)
+        self.action_update = make(
+            _("_Update"), "vc-update-24.png", None, _("Update"),
+            self.on_button_update_clicked)
+        self.action_add = make(
+            _("_Add"), "vc-add-24.png", None, _("Add to VC"),
+            self.on_button_add_clicked)
+        self.action_add_binary = make(
+            _("Add _Binary"), None, "list-add", _("Add binary to VC"),
+            self.on_button_add_binary_clicked)
+        self.action_remove = make(
+            _("_Remove"), "vc-remove-24.png", None, _("Remove from VC"),
+            self.on_button_remove_clicked)
+        self.action_resolved = make(
+            _("_Resolved"), "vc-resolve-24.png", None,
+            _("Mark as resolved for VC"), self.on_button_resolved_clicked)
+        self.action_revert = make(
+            _("Revert"), None, "document-revert", _("Revert to original"),
+            self.on_button_revert_clicked)
+        self.action_delete_locally = make(
+            _("Delete"), None, "edit-delete", _("Delete locally"),
+            self.on_button_delete_clicked)
+
+    def _build_menus(self):
+        self.vcstatus_menu = QMenu(
+            gtk_mnemonic_to_qt(_("Version status")), self.widget)
+        for action in (self.action_filter_modified, self.action_filter_normal,
+                       self.action_filter_nonvc, self.action_filter_ignored):
+            self.vcstatus_menu.addAction(action)
+
+    def _tree_context_menu(self, pos):
+        menu = QMenu(self.treeview)
+        menu.addAction(self.action_compare)
+        menu.addAction(self.action_update)
+        menu.addAction(self.action_commit)
+        menu.addSeparator()
+        menu.addAction(self.action_open)
+        menu.addSeparator()
+        menu.addAction(self.action_add)
+        menu.addAction(self.action_add_binary)
+        menu.addAction(self.action_resolved)
+        menu.addAction(self.action_remove)
+        menu.addAction(self.action_revert)
+        menu.addSeparator()
+        menu.addAction(self.action_delete_locally)
+        menu.exec(self.treeview.viewport().mapToGlobal(pos))
+
+    def doc_actions(self):
+        return [self.action_compare, self.action_open, self.action_commit,
+                self.action_update, self.action_add, self.action_add_binary,
+                self.action_remove, self.action_resolved, self.action_revert,
+                self.action_delete_locally, self.action_flatten,
+                self.action_filter_modified, self.action_filter_normal,
+                self.action_filter_nonvc, self.action_filter_ignored]
+
+    def menu_contributions(self):
+        return {
+            "file": [],
+            "edit": [],
+            "changes": [],
+            "view": [self.action_flatten, self.vcstatus_menu.menuAction()],
+        }
+
+    def toolbar_contributions(self):
+        def sep():
+            action = QAction(self.widget)
+            action.setSeparator(True)
+            return action
+
+        return [self.action_compare, sep(), self.action_commit,
+                self.action_update, self.action_add, self.action_resolved,
+                self.action_remove, self.action_revert,
+                self.action_delete_locally, sep(), self.action_flatten,
+                self.action_filter_modified, self.action_filter_normal,
+                self.action_filter_nonvc, self.action_filter_ignored]
+
     def update_actions_sensitivity(self):
-        # WP7.10 lands the command actions this enables/disables; no-op so far.
-        pass
+        """Disable actions whose VC plugin method is not implemented."""
+        # Probe each command builder (side-effect-free: it only assembles an
+        # argv list). Verbatim mapping from meld/vcview.py:109-118.
+        action_vc_cmds_map = {
+            self.action_compare: ("diff_command", ()),
+            self.action_commit: ("commit_command", ("",)),
+            self.action_update: ("update_command", ()),
+            self.action_add: ("add_command", ()),
+            self.action_add_binary: ("add_command", ()),
+            self.action_resolved: ("resolved_command", ()),
+            self.action_remove: ("remove_command", ()),
+            self.action_revert: ("revert_command", ()),
+        }
+        for action, (meth_name, args) in action_vc_cmds_map.items():
+            try:
+                getattr(self.vc, meth_name)(*args)
+                action.setEnabled(True)
+            except NotImplementedError:
+                action.setEnabled(False)
 
     def choose_vc(self, vcs):
         """Populate the VC combo for the location, disabling unusable plugins."""
@@ -400,6 +524,7 @@ class VcView(MeldDoc):
             else:                  # just the root
                 self.treeview.expand(root_index)
         self.vc.uncache_inventory()
+        self._surface_warnings()
 
     def _expand_to_root(self, index):
         """Expand every row from the model root down to (and including) index."""
@@ -530,13 +655,146 @@ class VcView(MeldDoc):
             paths.append(path[:-1] if path.endswith("/") else path)
         return paths
 
-    # ----- diff (interim) ---------------------------------------------------
+    # ----- button handlers --------------------------------------------------
+
+    def on_button_diff_clicked(self, *args):
+        files = self._get_selected_files()
+        if files:
+            self.run_diff(files, empty_patch_ok=True)
+
+    def on_button_open_clicked(self, *args):
+        self._open_files(self._get_selected_files())
+
+    def on_button_update_clicked(self, *args):
+        self._command_on_selected(self.vc.update_command())
+
+    def on_button_commit_clicked(self, *args):
+        # WP7.12 replaces this interim with the full CommitDialog (a changed-
+        # files summary + a Previous-Logs history combo). QInputDialog is modal
+        # but runs from a QAction slot (event-loop context), so it is safe.
+        files = self._get_selected_files()
+        if not files:
+            QMessageBox.information(
+                self.widget, "Meld", _("Select some files first."))
+            return
+        msg, ok = QInputDialog.getMultiLineText(
+            self.widget, _("Commit"), _("Log Message"))
+        if ok:
+            self._command_on_selected(self.vc.commit_command(msg))
+
+    def on_button_add_clicked(self, *args):
+        self._command_on_selected(self.vc.add_command())
+
+    def on_button_add_binary_clicked(self, *args):
+        self._command_on_selected(self.vc.add_command(binary=1))
+
+    def on_button_remove_clicked(self, *args):
+        self._command_on_selected(self.vc.remove_command())
+
+    def on_button_resolved_clicked(self, *args):
+        self._command_on_selected(self.vc.resolved_command())
+
+    def on_button_revert_clicked(self, *args):
+        self._command_on_selected(self.vc.revert_command())
+
+    def on_button_delete_clicked(self, *args):
+        files = self._get_selected_files()
+        for name in files:
+            try:
+                if os.path.isfile(name):
+                    os.remove(name)
+                elif os.path.isdir(name):
+                    if QMessageBox.question(
+                            self.widget, "Meld",
+                            _("'%s' is a directory.\nRemove recursively?")
+                            % os.path.basename(name),
+                            QMessageBox.StandardButton.Ok
+                            | QMessageBox.StandardButton.Cancel
+                            ) == QMessageBox.StandardButton.Ok:
+                        shutil.rmtree(name)
+            except OSError as e:
+                QMessageBox.warning(
+                    self.widget, "Meld",
+                    _("Error removing %s\n\n%s.") % (name, e))
+        if files:
+            self.refresh_partial(_commonprefix(files))
+
+    # ----- command pipeline -------------------------------------------------
 
     def run_diff(self, path_list, empty_patch_ok=False):
         # WP7.11 replaces this with the diff/patch pipeline (run_diff_iter ->
         # _command_iter -> show_patch). Until then, open a plain comparison.
         for path in path_list:
             self.create_diff.emit([path])
+
+    def _command_iter(self, command, files, refresh):
+        """Run `command` on `files`, streaming output to the console.
+
+        Yields status strings while running; the final yielded value is
+        (workdir, output). Runs inside a scheduler pump tick.
+        """
+        msg = misc.shelljoin(command)
+        yield "[%s] %s" % (self.label_text, msg.replace("\n", "↲"))
+
+        def relpath(pbase, p):
+            kill = 0
+            if len(pbase) and p.startswith(pbase):
+                kill = len(pbase) + 1
+            return p[kill:] or "."
+
+        if len(files) == 1 and os.path.isdir(files[0]):
+            workdir = self.vc.get_working_directory(files[0])
+        else:
+            workdir = self.vc.get_working_directory(_commonprefix(files))
+        files = [relpath(workdir, f) for f in files]
+        r = None
+        self.consolestream.write(
+            misc.shelljoin(command + files) + " (in %s)\n" % workdir)
+        readfunc = misc.read_pipe_iter(
+            command + files, self.consolestream, workdir=workdir).__next__
+        try:
+            while r is None:
+                r = readfunc()
+                self.consolestream.write(r)
+                yield 1
+        except OSError as e:
+            # This runs inside a pump tick: a modal dialog would re-enter the
+            # event loop and call next() on THIS generator (ValueError:
+            # generator already executing). Use the non-modal msgarea instead.
+            self._add_dismissable_msg(
+                "dialog-error",
+                _("Error running command.\n'%s'\n\nThe error was:\n%s")
+                % (misc.shelljoin(command), e))
+        if refresh:
+            self.refresh_partial(workdir)
+        self._surface_warnings()
+        yield workdir, r
+
+    def _command(self, command, files, refresh=True):
+        self.scheduler.add_task(
+            self._command_iter(command, files, refresh).__next__)
+
+    def _command_on_selected(self, command, refresh=True):
+        files = self._get_selected_files()
+        if files:
+            self._command(command, files, refresh)
+        else:
+            QMessageBox.information(
+                self.widget, "Meld", _("Select some files first."))
+
+    def _add_dismissable_msg(self, icon, primary, secondary=None):
+        area = self.msgarea.new_from_text_and_icon(icon, primary, secondary)
+        area.add_stock_button_with_text(
+            gtk_mnemonic_to_qt(_("Hi_de")), "window-close", ResponseId.CLOSE)
+        area.response.connect(lambda *args: self.msgarea.clear())
+        return area
+
+    def _surface_warnings(self):
+        # Where plugin warnings (e.g. the cvs .cvsignore compile error, T7.6)
+        # reach the user, replacing the old modal misc.run_dialog.
+        for w in self.vc.warnings:
+            self.msgarea.new_from_text_and_icon("dialog-warning", w)
+        self.vc.warnings.clear()
 
     # ----- lifecycle --------------------------------------------------------
 
