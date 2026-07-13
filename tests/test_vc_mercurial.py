@@ -9,8 +9,9 @@ from meldq.vc import _vc, mercurial
 
 
 @pytest.fixture
-def hg_vc(tmp_path):
-    mercurial.Vc.check_repo_root = lambda self, location: location
+def hg_vc(tmp_path, monkeypatch):
+    monkeypatch.setattr(mercurial.Vc, "check_repo_root",
+                        lambda self, location: location)
     vc = mercurial.Vc(str(tmp_path))
     vc.root = str(tmp_path)
     vc.location = str(tmp_path)

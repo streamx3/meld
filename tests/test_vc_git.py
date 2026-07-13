@@ -9,9 +9,10 @@ from meldq.vc import _vc, git
 
 
 @pytest.fixture
-def parser_repo(tmp_path):
+def parser_repo(tmp_path, monkeypatch):
     """A Git Vc whose repo-root check is stubbed so no real .git is needed."""
-    git.Vc.check_repo_root = lambda self, location: location
+    monkeypatch.setattr(git.Vc, "check_repo_root",
+                        lambda self, location: location)
     vc = git.Vc(str(tmp_path))
     vc.root = str(tmp_path)
     vc.location = str(tmp_path)

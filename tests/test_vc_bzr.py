@@ -7,8 +7,9 @@ from meldq.vc import _vc, bzr
 
 
 @pytest.fixture
-def bzr_vc(tmp_path):
-    bzr.Vc.check_repo_root = lambda self, location: location
+def bzr_vc(tmp_path, monkeypatch):
+    monkeypatch.setattr(bzr.Vc, "check_repo_root",
+                        lambda self, location: location)
     vc = bzr.Vc(str(tmp_path))
     vc.root = str(tmp_path)
     vc.location = str(tmp_path)

@@ -9,9 +9,10 @@ from meldq.vc import _vc, svn
 
 
 @pytest.fixture
-def parser_vc(tmp_path):
+def parser_vc(tmp_path, monkeypatch):
     """An svn Vc whose repo-root check is stubbed so no real .svn is needed."""
-    svn.Vc.check_repo_root = lambda self, location: location
+    monkeypatch.setattr(svn.Vc, "check_repo_root",
+                        lambda self, location: location)
     vc = svn.Vc(str(tmp_path))
     vc.root = str(tmp_path)
     vc.location = str(tmp_path)
