@@ -21,20 +21,25 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.9 done (plugins + registry + VcView scan); **resume at T7.10** (VC actions/menus) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.10 done (plugins + registry + VcView scan/actions/command pipeline); **resume at T7.11** (run_diff_iter/show_patch) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**368 tests pass, 4 skipped** as of WP7.9. Test count grows per task.
+**376 tests pass, 4 skipped** as of WP7.10. Test count grows per task.
 
-WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton — combo/console/splitter)
-and T7.9 (recursive scan generator, filters, `next_diff`, selection) are done in
-`meldq/vcview.py`. Two interim stubs remain for T7.10/T7.11: `run_diff` currently
-just `create_diff.emit`s (T7.11 adds the patch pipeline) and
-`update_actions_sensitivity` is a no-op (T7.10 lands the command actions). Note the
-**git untracked-file quirk** surfaces in the UI: an untracked non-ignored file shows
-as NORMAL (not Unversioned), so the Non-VC/Unversioned filter path is tested via the
-`_null` backend, and git's real Ignored state via the Ignored filter.
+WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton), T7.9 (scan/filters/
+`next_diff`/selection) and T7.10 (10 command actions, `update_actions_sensitivity`,
+doc/menu/toolbar contributions, context menu, **and the command-execution pipeline**
+`_command_iter`/`_command`/`_command_on_selected` + `_surface_warnings`) are done in
+`meldq/vcview.py`. **Re-slice vs plan:** T7.10 pulled in the command half of T7.11
+(the buttons were otherwise dead), so **T7.11 is reduced to the diff/patch-viewing
+half** — `run_diff_iter` + `show_patch` (replace the interim `run_diff` create_diff
+stub). T7.12 CommitDialog is still pending (Commit button uses an interim
+QInputDialog). Key trap honored: **zero modal dialogs inside generator frames** — the
+command failure path uses a dismissable msgarea; a modal there would re-enter the
+pump and re-enter the generator (ValueError: generator already executing).
+Note the **git untracked-file quirk** surfaces in the UI: an untracked non-ignored
+file shows as NORMAL (not Unversioned); Non-VC/Unversioned is tested via `_null`.
 
 WP7 status: the entire **Qt-free vc/ layer is done** — `_vc` base (T7.2), the
 five live plugins git/svn/mercurial/bzr/cvs (T7.3–T7.6), and the `_null`
