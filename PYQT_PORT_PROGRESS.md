@@ -21,11 +21,11 @@ untouched behavioral spec.
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
 | WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
-| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.11 done (plugins + registry + VcView scan/actions/command+diff pipeline); **resume at T7.12** (CommitDialog) |
+| WP7 | **Version control (vcview + vc/ plugins)** | 🟡 T7.1–T7.12 done (VcView functionally complete: scan/actions/command+diff/commit); **resume at T7.13** (purity/tools/wiring/smoke) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**380 tests pass, 4 skipped** as of WP7.11. Test count grows per task.
+**389 tests pass, 4 skipped** as of WP7.12. Test count grows per task.
 
 WP7 UI progress: T7.8 (`VcTreeModel`, `VcView` skeleton), T7.9 (scan/filters/
 `next_diff`/selection) and T7.10 (10 command actions, `update_actions_sensitivity`,
@@ -35,8 +35,11 @@ doc/menu/toolbar contributions, context menu, **and the command-execution pipeli
 (the buttons were otherwise dead), so **T7.11 is reduced to the diff/patch-viewing
 half** — `run_diff_iter` + `show_patch` (replace the interim `run_diff` create_diff
 stub). T7.11 (real `run_diff`/`run_diff_iter`/`show_patch`) is done — verified end-to-end
-against real git + `/usr/bin/patch`. **T7.12 CommitDialog is the only remaining VcView
-piece** (Commit button uses an interim QInputDialog). Key trap honored throughout:
+against real git + `/usr/bin/patch`. **T7.12 CommitDialog is done** — built in CODE
+(project convention, not a Designer `.ui`; it embeds a promoted `HistoryCombo`), with an
+injectable `settings` so tests isolate history. So **VcView is functionally complete**;
+only **T7.13** (purity guard, real-tool matrix, MeldWindow wiring test, manual smoke)
+remains in WP7. Key trap honored throughout:
 **zero modal dialogs inside generator frames** — command failure, no-differences, and
 patch failure all use a non-modal msgarea; a modal there would re-enter the pump and
 re-enter the generator (ValueError: generator already executing). The `show_patch`
