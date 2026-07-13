@@ -19,13 +19,26 @@ untouched behavioral spec.
 | WP2 | Engine (matchers/diffutil/merge/undo/task) + pure util/misc | ✅ done |
 | WP3 | App shell, prefs, CLI, dialogs (T3.1–T3.10) | ✅ done |
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
-| WP5 | **Directory comparison (dirdiff)** | ⬜ **not started** |
+| WP5 | **Directory comparison (dirdiff)** | 🟡 T5.1–T5.2 done (treemodel newer-emblem + `_files_same`/filters); **resume at T5.3** (DirDiff skeleton) |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
 | WP7 | **Version control (vcview + vc/ plugins)** | ✅ **done** — T7.1–T7.13 (plugins, registry, VcView, commit dialog, purity/wiring/smoke) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**392 tests pass, 4 skipped** as of WP7.13 (**WP7 complete**). Test count grows per task.
+**401 tests pass, 4 skipped** as of WP5.2. Test count grows per task.
+
+**WP5 (dirdiff) started.** T5.1 extended the shared `treemodel.py` with `ROLE_NEWER` +
+`set_newer` + newer-emblem compositing (vcview unaffected — it never sets the role). T5.2
+created `meldq/dirdiff.py`'s Qt-free core: `_files_same` (tri-state, **bytes** read,
+`StatSig` namedtuple cache that fixes 1.4's silently-dead `struct.__cmp__` cache), `clear_cache()`
+(update_regexes must call it — the cache is path-keyed so a filter change needs invalidation),
+`build_text_filters` (`re.M` flag, not the trailing `(?m)` that py3.11 rejects), and
+`build_name_filters`/`TypeFilter`. **Resume at T5.3** = the DirDiff document itself
+(skeleton/layout/model-wiring/pane-switching), which — like VcView — couples tightly with
+T5.5 (state computation) and T5.6 (scan) to make the tree populate; `test_vcview_window.py`
++ the VcView command/scan structure are the working reference. Note the action-manager
+lazy-import test now simulates the ImportError directly (dirdiff module exists but its
+DirDiff class doesn't until T5.3).
 
 **WP7 is DONE.** `meldq/vcview.py` holds the full VcView: T7.8 (`VcTreeModel`, skeleton),
 T7.9 (scan/filters/`next_diff`/selection), T7.10 (10 command actions,
