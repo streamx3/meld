@@ -120,10 +120,17 @@ def test_close_all_right_to_left(window):
 
 def test_append_missing_module_warns(window, monkeypatch):
     # the lazy-import fallback: a comparison type whose module is not yet
-    # ported (vcview, pending WP7) shows a warning instead of crashing
+    # ported (dirdiff, pending WP5) shows a warning instead of crashing
     warnings = []
     monkeypatch.setattr("meldq.app.QMessageBox.warning",
                         lambda *a, **k: warnings.append(a))
-    result = window.append_vcview(["some_dir"])
+    result = window.append_dirdiff(["some_dir"])
     assert result is None
     assert len(warnings) == 1
+
+
+def test_append_vcview_now_available(window, tmp_path):
+    # vcview is ported (WP7.8+): append_vcview builds a real tab, no warning.
+    doc = window.append_vcview([str(tmp_path)])
+    assert doc is not None
+    assert doc.__class__.__name__ == "VcView"
