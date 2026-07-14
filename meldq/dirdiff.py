@@ -26,7 +26,7 @@ import os
 import re
 import stat
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -41,8 +41,10 @@ from meldq.doc import MeldDoc
 from meldq.util import misc
 from meldq.widgets.historycombo import FileHistoryCombo
 from meldq.widgets.treemodel import (
+    STATE_MISSING,
     STATE_MODIFIED,
     STATE_NEW,
+    STATE_NOCHANGE,
     STATE_NORMAL,
     DiffTreeModel,
 )
@@ -196,6 +198,72 @@ def build_name_filters(filters_pref, on_error=None):
     return result
 
 
+class _Accum:
+    """Case-sensitive directory-entry accumulator (meld/dirdiff.py:407-414).
+
+    Collects entry names seen in any pane; get() returns each unique name as an
+    ntree-tuple (the same name in every pane), which the scan then joins onto
+    each pane's root to build the per-pane paths.
+    """
+
+    bad = ()        # no case collisions are possible in case-sensitive mode
+
+    def __init__(self, parent, roots):
+        self.items = []
+        self.n = parent.num_panes
+
+    def add(self, pane, items):
+        self.items.extend(items)
+
+    def get(self):
+        return [(name,) * self.n for name in sorted(set(self.items))]
+
+
+class _AccumIgnoreCase:
+    """Case-insensitive accumulator (meld/dirdiff.py:417-449).
+
+    Maps a canonical (lower-cased) name to the real per-pane names. When two
+    entries in one pane share a canonical name the first wins and the second is
+    recorded in `bad`; the caller surfaces those collisions (the 1.4 original
+    used ``assert`` for that control flow — which ``python -O`` strips — and
+    popped a *modal* dialog from inside the scan generator, both of which this
+    port avoids).
+    """
+
+    def __init__(self, parent, roots):
+        self.items = {}         # canonical name -> [realname or None per pane]
+        self.bad = []
+        self.roots = roots
+        self.n = parent.num_panes
+
+    def add(self, pane, items):
+        for name in items:
+            ci = name.lower()
+            entry = self.items.get(ci)
+            if entry is None:
+                entry = [None] * self.n
+                entry[pane] = name
+                self.items[ci] = entry
+            elif entry[pane] is None:
+                entry[pane] = name
+            else:
+                self.bad.append(_("'%s' hidden by '%s'") %
+                                (os.path.join(self.roots[pane], name),
+                                 entry[pane]))
+
+    def get(self):
+        def first_nonempty(seq):
+            for s in seq:
+                if s:
+                    return s
+
+        result = []
+        for k in sorted(self.items):
+            tuples = self.items[k]
+            result.append(tuple(t or first_nonempty(tuples) for t in tuples))
+        return result
+
+
 class DirTreeView(QTreeView):
     """One of the (up to three) directory panes.
 
@@ -311,7 +379,11 @@ class DirDiff(MeldDoc):
 
     def set_num_panes(self, n):
         if n != self.num_panes and n in (1, 2, 3):
-            self._set_model(DiffTreeModel(n))
+            # Parent the model to the widget: the three views share one model
+            # with no QObject parent, so Python GC could free it while a view's
+            # pending layout timer still points at it (segfault). Widget-owned,
+            # Qt tears the views and model down together, disconnecting safely.
+            self._set_model(DiffTreeModel(n, parent=self.widget))
             # Explicit loops, NOT map(...) — map is lazy in py3, so 1.4's
             # `map(lambda x: x.show(), toshow)` (dirdiff.py:863/:866) is a
             # silent no-op that would leave pane switching broken.
@@ -380,25 +452,297 @@ class DirDiff(MeldDoc):
             self.widget, "Meld",
             _("Error converting pattern '%s' to regular expression") % value)
 
-    # ----- stubs filled by later tasks --------------------------------------
+    def on_preference_changed(self, key):
+        # The contract narrows notify to the pref name (prefs.py); re-read it.
+        if key == "regexes":
+            self.update_regexes()
+
+    # ----- per-row state computation (T5.5) ---------------------------------
 
     def _update_item_state(self, it):
-        # T5.5 computes real states via _files_same; skeleton marks present
-        # panes NORMAL so the root row displays its directory names.
-        for pane in range(self.model.ntree):
-            path = self.model.value_path(it, pane)
-            if path is not None:
-                self.model.set_state(it, pane, STATE_NORMAL,
-                                     isdir=os.path.isdir(path))
+        """Compute and set the per-pane state of the row `it`, returning True
+        if it differs across panes (drives scan auto-expansion). Port of
+        meld/dirdiff.py:781-828.
+        """
+        files = self.model.value_paths(it)
 
-    def recursively_update(self, path):
-        # T5.6 adds the scan task; skeleton just purges children and refreshes
-        # the row's own state.
-        it = self.model.index_for_rowpath(path)
+        def mtime(f):
+            try:
+                return os.stat(f).st_mtime
+            except OSError:
+                return 0
+
+        # The newest present file gets the "newer" emblem, but only if the
+        # files actually differ in age (all-equal mtimes -> no emblem).
+        mod_times = [mtime(f) for f in files[:self.num_panes]]
+        newest = max(mod_times)
+        newest_index = mod_times.index(newest)
+        if mod_times.count(newest) == len(mod_times):
+            newest_index = -1
+        all_present = 0 not in mod_times
+        if all_present:
+            all_same = _files_same(files, self.regexes)
+            all_present_same = all_same
+        else:
+            lof = [files[j] for j in range(len(mod_times)) if mod_times[j]]
+            all_same = 0
+            all_present_same = _files_same(lof, self.regexes)
+
+        different = True
+        one_isdir = [None] * self.model.ntree
+        for j in range(self.model.ntree):
+            if mod_times[j]:
+                isdir = os.path.isdir(files[j])
+                if all_same == 1:
+                    self.model.set_state(it, j, STATE_NORMAL, isdir)
+                    different = False
+                elif all_same == 2:
+                    self.model.set_state(it, j, STATE_NOCHANGE, isdir)
+                    different = False
+                elif all_present_same:
+                    self.model.set_state(it, j, STATE_NEW, isdir)
+                else:
+                    self.model.set_state(it, j, STATE_MODIFIED, isdir)
+                self.model.set_newer(it, j, j == newest_index)
+                one_isdir[j] = isdir
+        for j in range(self.model.ntree):
+            if not mod_times[j]:
+                self.model.set_state(it, j, STATE_MISSING, any(one_isdir))
+                # Clear any stale emblem (1.4 left it, so a file that became
+                # missing could keep showing the "newer" overlay).
+                self.model.set_newer(it, j, False)
+        return different
+
+    def _filter_on_state(self, roots, fileslist):
+        """Return only the same-named tuples whose computed state passes the
+        active state filters (port of meld/dirdiff.py:757-779). `_files_same`
+        is truthy (1 or 2) for identical / identical-after-filter files.
+        """
+        assert len(roots) == self.model.ntree
+        ret = []
+        for files in fileslist:
+            curfiles = [os.path.join(r, f) for r, f in zip(roots, files)]
+            all_present = all(os.path.exists(f) for f in curfiles)
+            if all_present:
+                if _files_same(curfiles, self.regexes):
+                    state = STATE_NORMAL
+                else:
+                    state = STATE_MODIFIED
+            else:
+                state = STATE_NEW
+            if state in self.state_filters:
+                ret.append(files)
+        return ret
+
+    def file_deleted(self, rowpath, pane):
+        # Still present in another pane? refresh; otherwise drop the row.
+        it = self.model.index_for_rowpath(rowpath)
+        if not it.isValid():
+            return
+        files = self.model.value_paths(it)
+        if any(os.path.exists(f) for f in files if f is not None):
+            self._update_item_state(it)
+        else:
+            self.model.removeRow(it.row(), it.parent())
+        self._update_diffmaps()
+
+    def file_created(self, rowpath, pane):
+        # Refresh the row and each ancestor up to (but not including) the root.
+        it = self.model.index_for_rowpath(rowpath)
+        while it.isValid() and self.model.rowpath(it) != (0,):
+            self._update_item_state(it)
+            it = it.parent()
+        self._update_diffmaps()
+
+    def on_file_changed(self, changed_filename):
+        """Locate `changed_filename` in each pane's tree and refresh the rows
+        that hold it (port of meld/dirdiff.py:986-1023).
+        """
+        model = self.model
+        changed_rowpaths = []
+        for pane in range(self.num_panes):
+            root = model.index(0, 0)
+            rootpath = model.value_path(root, pane)
+            if rootpath is None:
+                continue
+            current = rootpath.split(os.sep)
+            changed = changed_filename.split(os.sep)
+            if changed[:len(current)] != current:
+                continue
+            index = root
+            for component in changed[len(current):]:
+                child = model.index(0, 0, index)
+                while child.isValid():
+                    p = model.value_path(child, pane)
+                    if p is not None and os.path.basename(p) == component:
+                        index = child
+                        break
+                    child = model.index(child.row() + 1, 0, index)
+                # 1.4 quirk preserved: an unmatched component leaves `index` at
+                # the deepest match so far and the search continues from there.
+            if index.isValid():
+                rp = model.rowpath(index)
+                if rp not in changed_rowpaths:
+                    changed_rowpaths.append(rp)
+        for rp in changed_rowpaths:
+            index = model.index_for_rowpath(rp)
+            if index.isValid():
+                self._update_item_state(index)
+
+    def _update_diffmaps(self):
+        # T5.9 gives the dirdiff DiffMaps their state-traversal paint; until
+        # then this is a harmless repaint request (meld/dirdiff.py:886-888).
+        for dm in self.diffmap:
+            dm.update()
+
+    # ----- recursive scan (T5.6) --------------------------------------------
+
+    def recursively_update(self, rowpath):
+        """Purge the subtree at `rowpath`, refresh the row itself, and schedule
+        a recursive rescan (port of meld/dirdiff.py:381-390).
+        """
+        it = self.model.index_for_rowpath(rowpath)
         if not it.isValid():
             return
         self.model.removeRows(0, self.model.rowCount(it), it)
         self._update_item_state(it)
+        self.scheduler.add_task(
+            self._search_recursively_iter(rowpath).__next__)
+
+    def _add_scan_row(self, parent, roots, names):
+        """Add one child row for the same-named tuple `names` under `parent`,
+        compute its state, and return (child_index, differs)."""
+        paths = [os.path.join(r, n) for r, n in zip(roots, names)]
+        child = self.model.add_entries(parent, paths)
+        return child, bool(self._update_item_state(child))
+
+    def _search_recursively_iter(self, rootpath):
+        # The Hide action (created in T5.4) is disabled while scanning; guard
+        # until it exists.
+        action_hide = getattr(self, "action_hide", None)
+        if action_hide is not None:
+            action_hide.setEnabled(False)
+
+        yield _("[%s] Scanning %s") % (self.label_text, "")
+        root_index = self.model.index_for_rowpath(rootpath)
+        prefixlen = 1 + len(self.model.value_path(root_index, 0))
+        symlinks_followed = {}      # follow each symlink target only once
+        todo = [rootpath]
+        differing = set()           # rowpaths whose subtree holds differences
+        case_warnings = []
+
+        accum_cls = _AccumIgnoreCase if self.ignore_case else _Accum
+
+        while todo:
+            todo.sort()             # shallowest / earliest first
+            curpath = todo.pop(0)
+            it = self.model.index_for_rowpath(curpath)
+            roots = self.model.value_paths(it)
+            yield _("[%s] Scanning %s") % (
+                self.label_text, (roots[0] or "")[prefixlen:])
+
+            differences = False
+            accumdirs = accum_cls(self, roots)
+            accumfiles = accum_cls(self, roots)
+            for pane, root in enumerate(roots):
+                if root is None or not os.path.isdir(root):
+                    continue
+                try:
+                    entries = os.listdir(root)
+                except OSError as err:
+                    self.model.add_error(it, err.strerror, pane)
+                    differences = True
+                    continue
+                for nf in self.name_filters:
+                    entries = [e for e in entries if nf.filter(e)]
+                files = []
+                dirs = []
+                for e in entries:
+                    try:    # broken symlink / race; see bgo#585895
+                        s = os.lstat(os.path.join(root, e))
+                    except OSError:
+                        continue
+                    if stat.S_ISLNK(s.st_mode):
+                        if self.prefs.ignore_symlinks:
+                            continue
+                        key = (s.st_dev, s.st_ino)
+                        if symlinks_followed.get(key):
+                            continue
+                        symlinks_followed[key] = True
+                        try:
+                            s = os.stat(os.path.join(root, e))
+                        except OSError:
+                            continue        # dangling symlink
+                        if stat.S_ISREG(s.st_mode):
+                            files.append(e)
+                        elif stat.S_ISDIR(s.st_mode):
+                            dirs.append(e)
+                    elif stat.S_ISREG(s.st_mode):
+                        files.append(e)
+                    elif stat.S_ISDIR(s.st_mode):
+                        dirs.append(e)
+                accumfiles.add(pane, files)
+                accumdirs.add(pane, dirs)
+
+            alldirs = accumdirs.get()
+            allfiles = self._filter_on_state(roots, accumfiles.get())
+            case_warnings.extend(accumdirs.bad)
+            case_warnings.extend(accumfiles.bad)
+
+            # Directories first (each queued for descent), then files. Explicit
+            # loops, NOT 1.4's map(...)-for-side-effect (dirdiff.py:500-501),
+            # which is a lazy no-op in py3 and would add zero rows.
+            if alldirs or allfiles:
+                for names in alldirs:
+                    child, differs = self._add_scan_row(it, roots, names)
+                    differences |= differs
+                    todo.append(self.model.rowpath(child))
+                for names in allfiles:
+                    _child, differs = self._add_scan_row(it, roots, names)
+                    differences |= differs
+            else:               # empty directory -> placeholder row
+                self.model.add_empty(it)
+
+            if differences:
+                differing.add(curpath)
+
+        # Expand every ancestor of each differing row so the difference is
+        # visible: the de-duplicated equivalent of 1.4's expand walk
+        # (dirdiff.py:506-515) — the union of all prefixes of each differing
+        # path, expanded parents-first. Only treeview[0] is expanded here;
+        # T5.7's row-expanded sync mirrors it to the other panes.
+        to_expand = set()
+        for path in differing:
+            for level in range(1, len(path) + 1):
+                to_expand.add(path[:level])
+        for path in sorted(to_expand):
+            index = self.model.index_for_rowpath(path)
+            if index.isValid():
+                self.treeview[0].expand(index)
+
+        if case_warnings:
+            # Defer the modal OUT of this generator frame: shown inline it
+            # would run a nested event loop, re-enter the scheduler pump, and
+            # call __next__ on this still-executing generator (ValueError:
+            # generator already executing). singleShot fires it from the event
+            # loop, when this generator is merely suspended at a yield.
+            warnings = list(case_warnings)
+            QTimer.singleShot(
+                0, lambda: self._show_case_collision_warning(warnings))
+
+        yield _("[%s] Done") % self.label_text
+
+        if action_hide is not None:
+            action_hide.setEnabled(True)
+
+    def _show_case_collision_warning(self, warnings):
+        QMessageBox.information(
+            self.widget, "Meld",
+            _("You are running a case insensitive comparison on a case "
+              "sensitive filesystem. Some files are not visible:\n%s")
+            % "\n".join(warnings))
+
+    # ----- stubs filled by later tasks --------------------------------------
 
     def on_treeview_cursor_changed(self, *args):
         pass        # T5.7: status line
