@@ -19,13 +19,13 @@ untouched behavioral spec.
 | WP2 | Engine (matchers/diffutil/merge/undo/task) + pure util/misc | ✅ done |
 | WP3 | App shell, prefs, CLI, dialogs (T3.1–T3.10) | ✅ done |
 | WP4 | Shared widgets (treemodel/historycombo/msgarea/findbar) | ✅ done |
-| WP5 | **Directory comparison (dirdiff)** | 🟡 T5.1–T5.3 done (treemodel newer + `_files_same` + DirDiff skeleton); **resume at T5.5+T5.6** (state computation + scan → populating tree) |
+| WP5 | **Directory comparison (dirdiff)** | 🟡 T5.1–T5.3 + T5.5 + T5.6 done (tree populates from a live scan); **resume at T5.4** (actions/contributions) + T5.7 (cross-pane sync) |
 | WP6 | File comparison (filediff/filemerge/linkmap/diffmap/editor) | ✅ done — all T6.1–T6.13 |
 | WP7 | **Version control (vcview + vc/ plugins)** | ✅ **done** — T7.1–T7.13 (plugins, registry, VcView, commit dialog, purity/wiring/smoke) |
 | WP8 | i18n pipeline, packaging, desktop | ⬜ not started |
 | WP9 | Hardening, parity audit, translation proof | ⬜ not started |
 
-**407 tests pass, 4 skipped** as of WP5.3. Test count grows per task.
+**421 tests pass, 4 skipped** as of WP5.6. Test count grows per task.
 
 **WP5 (dirdiff) in progress — T5.1–T5.3 done.** T5.1 extended the shared `treemodel.py`
 (`ROLE_NEWER`/`set_newer`/newer-emblem; vcview unaffected). T5.2 = `meldq/dirdiff.py`'s
@@ -37,15 +37,43 @@ code-built `QGridLayout`, `_set_model` (reconnects `currentRowChanged` after eve
 no-op), `set_locations`/`on_fileentry_activate`/`refresh`/`recompute_label`, and
 `update_regexes`/`create_name_filters` wired to the T5.2 core.
 
-**Stubs to fill next (documented in the code):** `_update_item_state` (T5.5 — real state
-via `_files_same`), `recursively_update` + `_search_recursively_iter` (T5.6 — the scan; watch
-the `map`-no-op at dirdiff.py:500-501, the case-collision modal needing `scheduler.paused`,
-the accum classes), `on_treeview_cursor_changed`/`on_pane_pressed`/`on_treeview_row_activated`
-(T5.7). **Resume at T5.5+T5.6** — together they make the tree populate (the first
-`test_dirdiff_scan` acceptance). Then T5.4 (actions/contributions), T5.7 (cross-pane sync),
-T5.8 (ops), T5.9 (per-pane DiffMap — `meldq/diffmap.py` already has the `setup(scrollbar,
-chunk_fn)` API), T5.10 (integration). VcView's scan (`meldq/vcview.py`
-`_search_recursively_iter`) is the closest working reference for T5.6.
+**T5.5 (state computation) + T5.6 (recursive scan) DONE** — the DirDiff tree now
+populates from a live directory walk (`test_dirdiff_scan.py`, 14 tests). Landed in
+`meldq/dirdiff.py`:
+- **`_update_item_state`** — real per-pane state via `_files_same` tri-state (1→NORMAL,
+  2→NOCHANGE, 0→MODIFIED/NEW), MISSING for absent panes, the "newer" emblem on the
+  newest present pane (`set_newer`; also *cleared* on missing panes, fixing a 1.4 latent
+  stale-emblem bug), and the boolean `different` return that drives auto-expansion.
+- **`_filter_on_state`** — files filtered by the active `state_filters` (NOCHANGE files
+  filter as NORMAL, faithful to 1.4).
+- **`_search_recursively_iter`** — the scan generator: sorted todo, symlink-follow-once,
+  name filters, `_Accum`/`_AccumIgnoreCase` (hoisted to module level; the case-insensitive
+  one drops 1.4's `assert`-as-control-flow so `python -O` is safe), empty-dir placeholder,
+  and the difference-driven expand walk. Traps handled: **the `map`-no-op is replaced by
+  explicit dir-then-file loops**; **every `yield` is truthy** (a falsy yield makes the
+  FifoScheduler drop the task early); **the case-collision modal is deferred via
+  `QTimer.singleShot(0, …)` OUT of the generator frame** (showing it inline re-enters the
+  pump and calls `__next__` on the executing generator → `ValueError`; `scheduler.paused`
+  bracketing was the plan's idea but leaves the pump timer stopped with no clean restart —
+  singleShot is the robust fix). The expand walk is the de-duplicated equivalent of 1.4's
+  incremental walk (union of every prefix of each differing rowpath, expanded parents-first
+  in `treeview[0]`; T5.7 syncs the other panes).
+- **`file_deleted`/`file_created`/`on_file_changed`** — incremental refreshes (the
+  `on_file_changed` deepest-match quirk is preserved).
+- **Lifetime fix:** `set_num_panes` now parents the `DiffTreeModel` to `self.widget`. The
+  three views share one model with no QObject parent, so Python GC could free it while a
+  view's pending layout timer still pointed at it (**hard segfault** in
+  `QTreeView::timerEvent → …→ multiData`, observed across tests). Widget-owned, Qt tears
+  the views + model down together with proper disconnection.
+
+**Resume at T5.4** (actions/contributions — incl. the real `action_hide`, `IgnoreCase`
+toggle that sets `self.ignore_case`, state-filter toggles) + **T5.7** (cross-pane sync:
+`on_treeview_cursor_changed` status line, `on_pane_pressed` clear-other-panes,
+`on_treeview_row_activated` expand/launch, row-expanded propagation, `next_diff`,
+`_get_selected_paths`). Then T5.8 (ops: copy/delete/hide), T5.9 (per-pane DiffMap —
+`meldq/diffmap.py` already has `setup(scrollbar, chunk_fn)`), T5.10 (integration). Still
+stubbed in the code: `on_treeview_cursor_changed`/`on_pane_pressed`/`on_treeview_row_activated`.
+VcView's scan (`meldq/vcview.py` `_search_recursively_iter`) remains the closest reference.
 
 **WP7 is DONE.** `meldq/vcview.py` holds the full VcView: T7.8 (`VcTreeModel`, skeleton),
 T7.9 (scan/filters/`next_diff`/selection), T7.10 (10 command actions,
