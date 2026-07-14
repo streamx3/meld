@@ -1,0 +1,26 @@
+{
+ "description": "delete on one side vs edit on the other is a conflict",
+ "base": [
+  "a",
+  "b",
+  "c"
+ ],
+ "local": [
+  "a",
+  "c"
+ ],
+ "remote": [
+  "a",
+  "B!",
+  "c"
+ ],
+ "merged_lines": [
+  "a",
+  "(??)b",
+  "c"
+ ],
+ "unresolved": [
+  1
+ ],
+ "diff3_check": false
+}

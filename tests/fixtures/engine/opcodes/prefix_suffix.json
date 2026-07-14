@@ -1,0 +1,27 @@
+{
+ "description": "common prefix and suffix stripped, unbalanced middle replace",
+ "a": [
+  "p",
+  "q",
+  "OLD",
+  "s",
+  "t"
+ ],
+ "b": [
+  "p",
+  "q",
+  "NEW1",
+  "NEW2",
+  "s",
+  "t"
+ ],
+ "expected": [
+  [
+   "replace",
+   2,
+   3,
+   2,
+   4
+  ]
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "description": "pure insert at top (common-suffix path)",
+ "a": [
+  "c",
+  "d"
+ ],
+ "b": [
+  "a",
+  "b",
+  "c",
+  "d"
+ ],
+ "expected": [
+  [
+   "insert",
+   0,
+   0,
+   0,
+   2
+  ]
+ ]
+}

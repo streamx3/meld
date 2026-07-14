@@ -1,0 +1,24 @@
+{
+ "description": "insert two lines mid-file",
+ "a": [
+  "one",
+  "two",
+  "five"
+ ],
+ "b": [
+  "one",
+  "two",
+  "three",
+  "four",
+  "five"
+ ],
+ "expected": [
+  [
+   "insert",
+   2,
+   2,
+   2,
+   4
+  ]
+ ]
+}

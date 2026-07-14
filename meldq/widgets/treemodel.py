@@ -1,0 +1,301 @@
+### Copyright (C) 2002-2006 Stephen Kennedy <stevek@gnome.org>
+
+### This program is free software; you can redistribute it and/or modify
+### it under the terms of the GNU General Public License as published by
+### the Free Software Foundation; either version 2 of the License, or
+### (at your option) any later version.
+
+### This program is distributed in the hope that it will be useful,
+### but WITHOUT ANY WARRANTY; without even the implied warranty of
+### MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+### GNU General Public License for more details.
+
+### You should have received a copy of the GNU General Public License
+### along with this program; if not, write to the Free Software
+### Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+"""Shared tree model for dirdiff and vcview.
+
+Replaces meld/tree.py's DiffTreeStore: one QStandardItemModel with one
+column per pane, per-pane state stored in item roles and rendered via
+Foreground/Font/Decoration in data() — no Pango markup, no HTML delegate.
+"""
+
+import os
+from dataclasses import dataclass
+from importlib import resources
+
+from PyQt6.QtCore import QModelIndex, Qt
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QStandardItem,
+    QStandardItemModel,
+)
+
+# STATE constants — canonical for the UI layer; the vc WP imports these or
+# keeps values identical. Frozen at range(12) (meld/vc/_vc.py:33-36).
+STATE_IGNORED, STATE_NONE, STATE_NORMAL, STATE_NOCHANGE, \
+    STATE_ERROR, STATE_EMPTY, STATE_NEW, \
+    STATE_MODIFIED, STATE_CONFLICT, STATE_REMOVED, \
+    STATE_MISSING, STATE_MAX = range(12)
+
+ROLE_PATH = Qt.ItemDataRole.UserRole + 1    # str | None
+ROLE_STATE = Qt.ItemDataRole.UserRole + 2   # int STATE_*
+ROLE_ISDIR = Qt.ItemDataRole.UserRole + 3   # bool
+ROLE_NEWER = Qt.ItemDataRole.UserRole + 4   # bool; dirdiff "newer" emblem, default False
+
+
+@dataclass(frozen=True)
+class TextStyle:
+    fg: str | None = None
+    bg: str | None = None
+    bold: bool = False
+    italic: bool = False
+    strikethrough: bool = False
+
+
+# Transcribed from meld/tree.py:49-61 (Pango markup -> role styling).
+DEFAULT_TEXT_STYLES = [
+    TextStyle(fg="#888888"),                                  # IGNORED
+    TextStyle(fg="#888888"),                                  # NONE
+    TextStyle(fg="black"),                                    # NORMAL
+    TextStyle(fg="black", italic=True),                       # NOCHANGE
+    TextStyle(fg="#ff0000", bg="yellow", bold=True),          # ERROR
+    TextStyle(fg="#999999", italic=True),                     # EMPTY
+    TextStyle(fg="#008800", bold=True),                       # NEW
+    TextStyle(fg="#880000", bold=True),                       # MODIFIED
+    TextStyle(fg="#ff0000", bg="#ffeeee", bold=True),         # CONFLICT
+    TextStyle(fg="#880000", bold=True, strikethrough=True),   # REMOVED
+    TextStyle(fg="#888888", strikethrough=True),              # MISSING
+]
+assert len(DEFAULT_TEXT_STYLES) == STATE_MAX
+
+# (icon_filename, width) pairs per state (tree.py:30-38, :63-76); None = no icon.
+_ICON_FILES = [
+    ("tree-file-normal.png", "tree-folder-normal.png"),      # IGNORED
+    ("tree-file-normal.png", "tree-folder-normal.png"),      # NONE
+    ("tree-file-normal.png", "tree-folder-normal.png"),      # NORMAL
+    ("tree-file-normal.png", "tree-folder-normal.png"),      # NOCHANGE
+    (None, None),                                            # ERROR
+    (None, None),                                            # EMPTY
+    ("tree-file-new.png", "tree-folder-new.png"),            # NEW
+    ("tree-file-changed.png", "tree-folder-changed.png"),    # MODIFIED
+    ("tree-file-changed.png", "tree-folder-changed.png"),    # CONFLICT
+    ("tree-file-changed.png", "tree-folder-changed.png"),    # REMOVED
+    ("tree-file-missing.png", "tree-folder-missing.png"),    # MISSING
+]
+
+_icon_cache = None
+
+
+def state_icons():
+    """Lazily load the (file_icon, folder_icon) pair for each state.
+
+    Lazy because QPixmap requires a running QGuiApplication (tree.py:30-38
+    loaded at import; Qt cannot).
+    """
+    global _icon_cache
+    if _icon_cache is not None:
+        return _icon_cache
+    icon_dir = resources.files("meldq") / "resources" / "icons"
+
+    def load(name, width):
+        if name is None:
+            return None
+        pixmap = QPixmap(str(icon_dir / name)).scaledToWidth(
+            width, Qt.TransformationMode.SmoothTransformation)
+        return QIcon(pixmap)
+
+    _icon_cache = [(load(f, 14), load(d, 20)) for f, d in _ICON_FILES]
+    return _icon_cache
+
+
+_newer_emblem = None
+_newer_icon_cache = {}
+
+
+def _icon_for(state, isdir, newer):
+    """The base (state, isdir) icon, with the "newer" emblem composited on for
+    the dirdiff pane holding the newest copy (replaces EmblemCellRenderer +
+    tree-file-newer.png overlay, meld/dirdiff.py:103/143-147). Lazy + cached."""
+    base = state_icons()[state][1 if isdir else 0]
+    if not newer or base is None:
+        return base
+    key = (state, isdir)
+    cached = _newer_icon_cache.get(key)
+    if cached is not None:
+        return cached
+
+    global _newer_emblem
+    if _newer_emblem is None:
+        icon_dir = resources.files("meldq") / "resources" / "icons"
+        _newer_emblem = QPixmap(str(icon_dir / "tree-file-newer.png")).scaledToWidth(
+            14, Qt.TransformationMode.SmoothTransformation)
+
+    size = 20 if isdir else 14
+    base_pm = base.pixmap(size, size)
+    result = QPixmap(base_pm.size())
+    result.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(result)
+    painter.drawPixmap(0, 0, base_pm)
+    # right edge, vertically centered
+    painter.drawPixmap(max(0, base_pm.width() - _newer_emblem.width()),
+                       max(0, (base_pm.height() - _newer_emblem.height()) // 2),
+                       _newer_emblem)
+    painter.end()
+    icon = QIcon(result)
+    _newer_icon_cache[key] = icon
+    return icon
+
+
+class DiffTreeModel(QStandardItemModel):
+    def __init__(self, ntree=3, extra_cols=0, parent=None):
+        super().__init__(0, ntree + extra_cols, parent)
+        self.ntree = ntree
+        self.extra_cols = extra_cols
+        # instance-level so vcview can override one entry (vcview.py:92)
+        self.text_styles = list(DEFAULT_TEXT_STYLES)
+
+    def _row_items(self):
+        return [QStandardItem() for _ in range(self.ntree + self.extra_cols)]
+
+    def _parent_item(self, parent):
+        if parent is None or not parent.isValid():
+            return self.invisibleRootItem()
+        return self.itemFromIndex(parent.siblingAtColumn(0))
+
+    def add_entries(self, parent, names):
+        items = self._row_items()
+        self._parent_item(parent).appendRow(items)
+        for pane, name in enumerate(names):
+            if pane < self.ntree:
+                items[pane].setData(name, ROLE_PATH)
+        return items[0].index()
+
+    def add_empty(self, parent, text="empty folder"):
+        items = self._row_items()
+        self._parent_item(parent).appendRow(items)
+        for pane in range(self.ntree):
+            items[pane].setData(STATE_EMPTY, ROLE_STATE)
+            items[pane].setData(None, ROLE_PATH)
+            items[pane].setText(text)
+        return items[0].index()
+
+    def add_error(self, parent, msg, pane):
+        items = self._row_items()
+        self._parent_item(parent).appendRow(items)
+        for i in range(self.ntree):
+            items[i].setData(STATE_ERROR, ROLE_STATE)
+        items[pane].setText(msg)
+        return items[0].index()
+
+    def value_path(self, index, pane):
+        item = self.itemFromIndex(index.siblingAtColumn(pane))
+        return item.data(ROLE_PATH) if item is not None else None
+
+    def value_paths(self, index):
+        return [self.value_path(index, pane) for pane in range(self.ntree)]
+
+    def set_state(self, index, pane, state, isdir=False):
+        item = self.itemFromIndex(index.siblingAtColumn(pane))
+        item.setData(state, ROLE_STATE)
+        item.setData(bool(isdir), ROLE_ISDIR)
+        path = item.data(ROLE_PATH)
+        if path is not None:
+            item.setText(os.path.basename(path))
+
+    def get_state(self, index, pane):
+        item = self.itemFromIndex(index.siblingAtColumn(pane))
+        return item.data(ROLE_STATE)
+
+    def set_newer(self, index, pane, newer):
+        # dirdiff: mark the pane holding the newest copy so data() composites
+        # the "newer" emblem onto its icon.
+        item = self.itemFromIndex(index.siblingAtColumn(pane))
+        item.setData(bool(newer), ROLE_NEWER)
+
+    # ----- row addressing / traversal ---------------------------------------
+    #
+    # Indexes yielded by the generators and tuples from rowpath() are only
+    # stable while the model is unmodified; a consumer mutating rows mid-
+    # iteration must convert to QPersistentModelIndex first.
+
+    def rowpath(self, index):
+        path = []
+        while index.isValid():
+            path.append(index.row())
+            index = index.parent()
+        return tuple(reversed(path))
+
+    def index_for_rowpath(self, path):
+        idx = QModelIndex()
+        for row in path:
+            idx = self.index(row, 0, idx)
+            if not idx.isValid():
+                return QModelIndex()
+        return idx
+
+    def inorder_search_down(self, it):
+        while it.isValid():
+            child = self.index(0, 0, it)
+            if child.isValid():
+                it = child
+            else:
+                nxt = self.index(it.row() + 1, 0, it.parent())
+                if nxt.isValid():
+                    it = nxt
+                else:
+                    while True:
+                        it = it.parent()
+                        if it.isValid():
+                            nxt = self.index(it.row() + 1, 0, it.parent())
+                            if nxt.isValid():
+                                it = nxt
+                                break
+                        else:
+                            return          # PEP 479: terminate cleanly, never raise the sentinel
+            yield it
+
+    def inorder_search_up(self, it):
+        while it.isValid():
+            if it.row() > 0:                # has a previous sibling
+                it = self.index(it.row() - 1, 0, it.parent())
+                while True:
+                    nc = self.rowCount(it)
+                    if nc:
+                        it = self.index(nc - 1, 0, it)
+                    else:
+                        break
+            else:
+                up = it.parent()
+                if up.isValid():
+                    it = up
+                else:
+                    return                  # PEP 479: terminate cleanly, never raise the sentinel
+            yield it
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if index.isValid() and index.column() < self.ntree:
+            state = super().data(index, ROLE_STATE)
+            if state is not None and 0 <= state < len(self.text_styles):
+                style = self.text_styles[state]
+                if role == Qt.ItemDataRole.ForegroundRole and style.fg:
+                    return QBrush(QColor(style.fg))
+                if role == Qt.ItemDataRole.BackgroundRole and style.bg:
+                    return QBrush(QColor(style.bg))
+                if role == Qt.ItemDataRole.FontRole:
+                    font = QFont()
+                    font.setBold(style.bold)
+                    font.setItalic(style.italic)
+                    font.setStrikeOut(style.strikethrough)
+                    return font
+                if role == Qt.ItemDataRole.DecorationRole:
+                    isdir = bool(super().data(index, ROLE_ISDIR))
+                    newer = bool(super().data(index, ROLE_NEWER))
+                    return _icon_for(state, isdir, newer)
+        return super().data(index, role)
