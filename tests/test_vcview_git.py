@@ -136,3 +136,46 @@ def test_view_revert_action_refreshes(vc, repo):
     vc.revert(vc.model.index(0, 0))
     assert rows(vc) == {}                     # reverted -> clean, list refreshed
     assert (repo / "tracked.txt").read_text() == "original\n"
+
+
+# ----- commit ---------------------------------------------------------------
+
+def last_commit_msg(repo):
+    return subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_backend_commit_modified(repo):
+    (repo / "tracked.txt").write_text("v2\n")
+    assert gitvc.commit(str(repo), "update tracked", ["tracked.txt"])
+    assert gitvc.status(str(repo)) == {}
+    assert last_commit_msg(repo) == "update tracked"
+
+
+def test_backend_commit_untracked(repo):
+    (repo / "new.txt").write_text("hi\n")
+    assert gitvc.commit(str(repo), "add new", ["new.txt"])
+    assert "new.txt" not in gitvc.status(str(repo))     # now tracked + committed
+
+
+def test_commit_dialog_returns_message(qapp, qtbot):
+    from meldq.views.vcview import CommitDialog
+    dlg = CommitDialog(["a.txt", "b.txt"])
+    qtbot.addWidget(dlg)
+    dlg.message.setPlainText("my message")
+    assert dlg.commit_message() == "my message"
+
+
+def test_view_commit_files(vc, repo):
+    (repo / "tracked.txt").write_text("edited\n")
+    vc.set_location(str(repo))
+    vc.commit_files(["tracked.txt"], "committed via view")
+    assert rows(vc) == {}                     # committed -> clean, refreshed
+    assert last_commit_msg(repo) == "committed via view"
+
+
+def test_view_commit_ignores_empty_message(vc, repo):
+    (repo / "tracked.txt").write_text("edited\n")
+    vc.set_location(str(repo))
+    vc.commit_files(["tracked.txt"], "   ")   # blank -> no commit
+    assert rows(vc) == {"tracked.txt": gitvc.STATE_MODIFIED}

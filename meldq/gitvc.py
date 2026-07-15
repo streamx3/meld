@@ -94,6 +94,19 @@ def remove(repo_root, relpath):
     return _run(repo_root, ["rm", "-r", "--", relpath]).returncode == 0
 
 
+def commit(repo_root, message, relpaths=()):
+    """Commit `relpaths` (staging them first, so untracked/deleted are included)
+    with `message`; if none given, commit whatever is already staged. Returns
+    True on success."""
+    if relpaths:
+        if _run(repo_root, ["add", "--", *relpaths]).returncode != 0:
+            return False
+        proc = _run(repo_root, ["commit", "-m", message, "--", *relpaths])
+    else:
+        proc = _run(repo_root, ["commit", "-m", message])
+    return proc.returncode == 0
+
+
 def revert(repo_root, relpath):
     """Discard working changes to a tracked `relpath` (restore from HEAD). For
     an untracked file, delete it. Returns True on success."""

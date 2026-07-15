@@ -18,7 +18,16 @@ from PyQt6.QtGui import (
     QStandardItem,
     QStandardItemModel,
 )
-from PyQt6.QtWidgets import QMenu, QTreeView, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QMenu,
+    QPlainTextEdit,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from meldq import gitvc
 from meldq.widgets.infobar import InfoBar
@@ -143,12 +152,37 @@ class VcView(QWidget):
     def revert(self, index):
         self._act(index, gitvc.revert)
 
+    def _selected_relpaths(self):
+        out = []
+        for index in self.tree.selectionModel().selectedRows(0):
+            rel = self.row_relpath(index)
+            if rel:
+                out.append(rel)
+        return out
+
+    def commit_files(self, relpaths, message):
+        """Commit the given files with `message` and refresh (no dialog)."""
+        if relpaths and message.strip() and self.repo_root is not None:
+            gitvc.commit(self.repo_root, message, relpaths)
+            self.refresh()
+
+    def on_commit(self):
+        if self.repo_root is None:
+            return
+        files = self._selected_relpaths() or sorted(gitvc.status(self.repo_root))
+        if not files:
+            return
+        dialog = CommitDialog(files, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.commit_files(files, dialog.commit_message())
+
     def _context_menu(self, pos):
         index = self.tree.indexAt(pos)
         if not index.isValid():
             return
         menu = QMenu(self.tree)
         for label, slot in (("Compare", lambda: self.on_activated(index)),
+                            ("Commit…", self.on_commit),
                             ("Add", lambda: self.add(index)),
                             ("Revert", lambda: self.revert(index)),
                             ("Remove", lambda: self.remove(index))):
@@ -167,6 +201,36 @@ class VcView(QWidget):
         with open(dest, "wb") as f:
             f.write(data or b"")
         return dest
+
+
+class CommitDialog(QDialog):
+    """A commit-message dialog listing the files to be committed. Built in code
+    (project convention). commit_message() returns the entered text."""
+
+    def __init__(self, files, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Commit")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Commit %d file(s):" % len(files)))
+        files_label = QLabel("\n".join(files))
+        files_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(files_label)
+        layout.addWidget(QLabel("Message:"))
+        self.message = QPlainTextEdit()
+        self.message.setMinimumHeight(120)
+        layout.addWidget(self.message)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.message.setFocus()
+
+    def commit_message(self):
+        return self.message.toPlainText()
 
 
 def main(argv=None):
