@@ -9,10 +9,19 @@ compare/copy/trash-delete actions layer on next.
 """
 
 import os
+import shutil
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QTreeView, QVBoxLayout, QWidget
+from PyQt6.QtCore import QFile, Qt, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QStandardItem,
+    QStandardItemModel,
+)
+from PyQt6.QtWidgets import QMenu, QTreeView, QVBoxLayout, QWidget
 
 from meldq.dircompare import (
     STATE_ERROR,
@@ -41,6 +50,10 @@ _STYLE = {
 
 
 class DirDiffView(QWidget):
+    # Emitted with the list of existing files to compare when a file row is
+    # activated; the host opens a FileDiff. Mirrors the MeldDoc create_diff.
+    create_diff = pyqtSignal(list)
+
     def __init__(self, num_panes=2, parent=None):
         super().__init__(parent)
         assert num_panes in (2, 3)
@@ -55,6 +68,10 @@ class DirDiffView(QWidget):
         self.tree.setModel(self.model)
         self.tree.setUniformRowHeights(True)
         self.tree.setAllColumnsShowFocus(True)
+        self.tree.setExpandsOnDoubleClick(False)   # activation opens a diff
+        self.tree.activated.connect(self.on_activated)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context_menu)
         self.infobar = InfoBar()
 
         layout = QVBoxLayout(self)
@@ -137,6 +154,76 @@ class DirDiffView(QWidget):
         item = self.model.itemFromIndex(index.siblingAtColumn(0))
         return item.data(ROLE_REL) if item is not None else None
 
+    def _path(self, index, pane):
+        rel = self.row_relpath(index)
+        return os.path.join(self._roots[pane], rel) if rel is not None else None
+
+    # ----- actions ----------------------------------------------------------
+
+    def on_activated(self, index):
+        """Activate a row: a file opens a comparison, a directory toggles."""
+        rel = self.row_relpath(index)
+        if rel is None or not self._roots:
+            return
+        paths = [self._path(index, p) for p in range(self.num_panes)]
+        if any(os.path.isdir(p) for p in paths):
+            col0 = index.siblingAtColumn(0)
+            self.tree.setExpanded(col0, not self.tree.isExpanded(col0))
+            return
+        existing = [p for p in paths if os.path.isfile(p)]
+        if existing:
+            self.create_diff.emit(existing)
+
+    def copy_to(self, index, src_pane, dst_pane):
+        """Copy the row's file/dir from src_pane to dst_pane (same relpath)."""
+        src, dst = self._path(index, src_pane), self._path(index, dst_pane)
+        if src is None or not os.path.exists(src):
+            return
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+        self.refresh()
+
+    def delete(self, index, pane, to_trash=True):
+        """Delete the row's file/dir on `pane` (to Trash by default)."""
+        path = self._path(index, pane)
+        if path is None or not os.path.exists(path):
+            return
+        if to_trash and QFile.moveToTrash(path):
+            pass
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+        self.refresh()
+
+    # ----- context menu -----------------------------------------------------
+
+    def _context_menu(self, pos):
+        index = self.tree.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = QMenu(self.tree)
+        compare = QAction("Compare", menu)
+        compare.triggered.connect(lambda: self.on_activated(index))
+        menu.addAction(compare)
+        menu.addSeparator()
+        if self.num_panes == 2:
+            to_right = QAction("Copy to Right", menu)
+            to_right.triggered.connect(lambda: self.copy_to(index, 0, 1))
+            to_left = QAction("Copy to Left", menu)
+            to_left.triggered.connect(lambda: self.copy_to(index, 1, 0))
+            menu.addAction(to_right)
+            menu.addAction(to_left)
+        menu.addSeparator()
+        for pane in range(self.num_panes):
+            act = QAction("Delete (pane %d)" % pane, menu)
+            act.triggered.connect(lambda _=False, p=pane: self.delete(index, p))
+            menu.addAction(act)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
 
 def main(argv=None):
     import sys
@@ -148,6 +235,19 @@ def main(argv=None):
     app = QApplication(argv[:1])
     view = DirDiffView(len(roots) if len(roots) in (2, 3) else 2)
     view.resize(300 * view.num_panes, 600)
+
+    windows = []                # keep FileDiff windows alive
+
+    def open_diff(paths):
+        from meldq.views.filediff import FileDiffView
+        fd = FileDiffView(len(paths) if len(paths) in (2, 3) else 2)
+        fd.resize(900, 600)
+        fd.set_files(paths[:fd.num_panes])
+        fd.setWindowTitle("meldq — " + " : ".join(paths))
+        fd.show()
+        windows.append(fd)
+
+    view.create_diff.connect(open_diff)
     if len(roots) == view.num_panes:
         view.set_roots(roots)
     view.setWindowTitle("meldq — " + " : ".join(roots) if roots else "meldq")

@@ -110,6 +110,72 @@ def test_name_filter_applied(dd, tmp_path):
     assert set(top_rows(dd)) == {"keep.txt"}
 
 
+def test_activate_file_emits_create_diff(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "same.txt", b"a\n")
+    write(right / "same.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+    got = []
+    dd.create_diff.connect(got.append)
+    dd.on_activated(top_rows(dd)["same.txt"])
+    assert len(got) == 1
+    assert len(got[0]) == 2
+    assert all(p.endswith("same.txt") for p in got[0])
+
+
+def test_activate_file_only_one_side(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "onlyleft.txt", b"a\n")
+    right.mkdir()
+    dd.set_roots([str(left), str(right)])
+    got = []
+    dd.create_diff.connect(got.append)
+    dd.on_activated(top_rows(dd)["onlyleft.txt"])
+    assert got == [[str(left / "onlyleft.txt")]]     # only the existing file
+
+
+def test_activate_dir_toggles_expand(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "sub" / "a.txt", b"1\n")
+    write(right / "sub" / "a.txt", b"1\n")           # identical -> not auto-expanded
+    dd.set_roots([str(left), str(right)])
+    sub = top_rows(dd)["sub"]
+    assert not dd.tree.isExpanded(sub)
+    dd.on_activated(sub)
+    assert dd.tree.isExpanded(sub)
+    dd.on_activated(sub)
+    assert not dd.tree.isExpanded(sub)
+
+
+def test_copy_to_right_resolves_diff(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "onlyleft.txt", b"a\n")
+    right.mkdir()
+    dd.set_roots([str(left), str(right)])
+    dd.copy_to(top_rows(dd)["onlyleft.txt"], 0, 1)
+    assert (right / "onlyleft.txt").read_bytes() == b"a\n"
+    assert dd.row_state(top_rows(dd)["onlyleft.txt"], 0) == STATE_NORMAL
+
+
+def test_copy_to_left_overwrites(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"OLD\n")
+    write(right / "f.txt", b"NEW\n")
+    dd.set_roots([str(left), str(right)])
+    dd.copy_to(top_rows(dd)["f.txt"], 1, 0)           # right -> left
+    assert (left / "f.txt").read_bytes() == b"NEW\n"
+
+
+def test_delete_removes_and_updates(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"a\n")
+    write(right / "f.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+    dd.delete(top_rows(dd)["f.txt"], 0, to_trash=False)  # hard-delete for the test
+    assert not (left / "f.txt").exists()
+    assert dd.row_state(top_rows(dd)["f.txt"], 0) == STATE_MISSING
+
+
 def test_three_way(qapp, qtbot, tmp_path):
     view = DirDiffView(3)
     qtbot.addWidget(view)
