@@ -23,9 +23,23 @@ from meldq.widgets.sciview import (
 )
 
 
-def read_text(path):
-    with open(path, encoding="utf-8", errors="replace") as f:
-        return f.read()
+def load_file(path, codecs=("utf-8",)):
+    """Read `path`, returning (text, encoding, eol). Tries `codecs` then falls
+    back to latin-1 (which decodes any byte), so loading never fails; the
+    encoding + EOL are remembered for a faithful write-back on save."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    text = encoding = None
+    for candidate in (*codecs, "latin-1"):
+        try:
+            text, encoding = raw.decode(candidate), candidate
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    if text is None:
+        text, encoding = raw.decode("utf-8", errors="replace"), "utf-8"
+    eol = "\r\n" if "\r\n" in text else ("\r" if "\r" in text else "\n")
+    return text, encoding, eol
 
 
 class FileDiffView(QWidget):
@@ -35,6 +49,8 @@ class FileDiffView(QWidget):
         self.num_panes = num_panes
         self.panes = [MeldSciView() for _ in range(num_panes)]
         self._paths = [None] * num_panes
+        self._encoding = ["utf-8"] * num_panes      # remembered for write-back
+        self._eol = ["\n"] * num_panes
         self._syncing = False
         self._loading = False           # suppress re-diff while loading files
 
@@ -49,7 +65,13 @@ class FileDiffView(QWidget):
     # ----- loading ----------------------------------------------------------
 
     def set_files(self, paths):
-        self.set_texts([read_text(p) for p in paths], paths)
+        texts = []
+        for i, path in enumerate(paths):
+            text, encoding, eol = load_file(path)
+            self._encoding[i] = encoding
+            self._eol[i] = eol
+            texts.append(text)
+        self.set_texts(texts, paths)
 
     def set_texts(self, texts, paths=None):
         paths = paths or [None] * len(texts)
@@ -62,7 +84,27 @@ class FileDiffView(QWidget):
                 self._paths[i] = paths[i] if i < len(paths) else None
         finally:
             self._loading = False
+        for view in self.panes:
+            view.setModified(False)     # a freshly-loaded pane is unmodified
         self._render()
+
+    # ----- saving -----------------------------------------------------------
+
+    def is_modified(self, pane):
+        return self.panes[pane].isModified()
+
+    def save(self, pane, path=None):
+        """Write `pane` back with its original encoding + EOL. The buffer is
+        \\n-normalised, so we restore the file's line endings on the way out;
+        the trailing-newline state rides along in the text itself."""
+        path = path or self._paths[pane]
+        if path is None:
+            raise ValueError("no path to save pane %d" % pane)
+        text = self.panes[pane].text().replace("\n", self._eol[pane])
+        with open(path, "wb") as f:
+            f.write(text.encode(self._encoding[pane] or "utf-8"))
+        self._paths[pane] = path
+        self.panes[pane].setModified(False)
 
     def set_theme(self, theme):
         for view in self.panes:

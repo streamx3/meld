@@ -155,3 +155,65 @@ def test_merge_is_undoable(fd):
     fd.panes[1].undo()                            # native Scintilla undo
     assert fd.panes[1].text() == "a\nRIGHT\nb\n"  # merge reverted
     assert KIND_REPLACE in kinds(fd, 1, 1)        # and the diff re-renders
+
+
+# ----- M2: encoding-aware load / save ---------------------------------------
+
+def test_save_roundtrip_lf(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"one\ntwo\n")
+    b.write_bytes(b"one\n2\n")
+    fd.set_files([str(a), str(b)])
+    fd.save(0)
+    assert a.read_bytes() == b"one\ntwo\n"        # unchanged content preserved
+
+
+def test_save_preserves_crlf(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"one\r\ntwo\r\n")              # CRLF file
+    b.write_bytes(b"one\r\ntwo\r\n")
+    fd.set_files([str(a), str(b)])
+    fd.panes[0].set_text("one\nEDIT\n")           # buffer is LF-normalised...
+    fd.save(0)
+    assert a.read_bytes() == b"one\r\nEDIT\r\n"   # ...but CRLF restored on save
+
+
+def test_save_preserves_latin1(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"caf\xe9\n")                    # é in latin-1 (invalid utf-8)
+    b.write_bytes(b"cafe\n")
+    fd.set_files([str(a), str(b)])
+    assert fd._encoding[0] == "latin-1"
+    fd.save(0)
+    assert a.read_bytes() == b"caf\xe9\n"          # byte-identical write-back
+
+
+def test_save_no_final_newline(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"x\ny")                          # no trailing newline
+    b.write_bytes(b"x\ny\n")
+    fd.set_files([str(a), str(b)])
+    fd.save(0)
+    assert a.read_bytes() == b"x\ny"                # still no trailing newline
+
+
+def test_modified_tracking(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"a\nb\n")
+    b.write_bytes(b"a\nc\n")
+    fd.set_files([str(a), str(b)])
+    assert not fd.is_modified(0)                    # fresh load is clean
+    fd.panes[0].set_text("a\nEDITED\n")
+    assert fd.is_modified(0)
+    fd.save(0)
+    assert not fd.is_modified(0)                    # save clears the flag
+
+
+def test_merge_then_save(fd, tmp_path):
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"k\nLEFT\nm\n")
+    b.write_bytes(b"k\nRIGHT\nm\n")
+    fd.set_files([str(a), str(b)])
+    fd.copy_chunk(fd.chunk_at_line(0, 1), src_pane=0, dst_pane=1)
+    fd.save(1)
+    assert b.read_bytes() == b"k\nLEFT\nm\n"        # merged result persisted
