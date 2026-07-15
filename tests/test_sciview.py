@@ -1,0 +1,107 @@
+"""M1: MeldSciView (QScintilla diff editor) — the visual foundation.
+
+Headless assertions read state back through Scintilla (marker masks, indicator
+values) the same way the M0 gate spike did.
+"""
+
+import pytest
+from PyQt6.Qsci import QsciLexerCPP, QsciLexerPython
+
+from meldq.widgets.sciview import (
+    DARK,
+    KIND_DELETE,
+    KIND_INSERT,
+    KIND_REPLACE,
+    LIGHT,
+    MeldSciView,
+)
+
+
+@pytest.fixture
+def view(qapp, qtbot):
+    v = MeldSciView()
+    qtbot.addWidget(v)
+    return v
+
+
+def test_set_and_get_text(view):
+    view.set_text("alpha\nbeta\ngamma\n")
+    assert view.text() == "alpha\nbeta\ngamma\n"
+
+
+def test_set_text_respects_readonly_but_still_loads(view):
+    view.setReadOnly(True)
+    view.set_text("x\ny\n")            # set_text must load even when read-only
+    assert view.text() == "x\ny\n"
+    assert view.isReadOnly()           # and restore the flag
+
+
+def test_language_by_extension(view):
+    view.set_language_for("module.py")
+    assert isinstance(view.lexer(), QsciLexerPython)
+    view.set_language_for("main.cpp")
+    assert isinstance(view.lexer(), QsciLexerCPP)
+
+
+def test_language_unknown_extension_no_lexer(view):
+    view.set_language_for("data.unknownext")
+    assert view.lexer() is None
+
+
+def test_language_by_basename_makefile(view):
+    view.set_language_for("/proj/Makefile")
+    assert view.lexer() is not None
+
+
+def test_chunk_backgrounds(view):
+    view.set_text("l0\nl1\nl2\nl3\n")
+    view.add_chunk(1, 3, KIND_REPLACE)          # lines 1 and 2 (end-exclusive)
+    assert KIND_REPLACE in view.chunk_kinds_at(1)
+    assert KIND_REPLACE in view.chunk_kinds_at(2)
+    assert view.chunk_kinds_at(0) == []
+    assert view.chunk_kinds_at(3) == []
+
+
+def test_chunk_kinds_are_independent(view):
+    view.set_text("l0\nl1\nl2\n")
+    view.add_chunk(0, 1, KIND_DELETE)
+    view.add_chunk(1, 2, KIND_INSERT)
+    assert view.chunk_kinds_at(0) == [KIND_DELETE]
+    assert view.chunk_kinds_at(1) == [KIND_INSERT]
+
+
+def test_clear_chunks(view):
+    view.set_text("a\nb\nc\n")
+    view.add_chunk(0, 3, KIND_REPLACE)
+    view.clear_chunks()
+    assert all(view.chunk_kinds_at(i) == [] for i in range(3))
+
+
+def test_inline_highlight(view):
+    view.set_text("hello world\n")
+    view.add_inline(0, 0, 5)                     # "hello"
+    assert view.has_inline_at(0, 2)
+    assert not view.has_inline_at(0, 8)          # "world" not highlighted
+    view.clear_inline()
+    assert not view.has_inline_at(0, 2)
+
+
+def test_apply_theme_light_and_dark(view):
+    view.set_language_for("x.py")
+    view.apply_theme(DARK)
+    assert view._theme is DARK
+    view.apply_theme(LIGHT)
+    assert view._theme is LIGHT                  # switching back must not raise
+
+
+def test_coordinate_helpers(view):
+    view.set_text("\n".join(f"line {i}" for i in range(50)))
+    assert view.line_height() > 0
+    assert view.first_visible_line() == 0
+    assert view.lines_on_screen() >= 0
+    assert view.y_for_line(0) <= view.y_for_line(10)  # y increases down the doc
+
+
+def test_scroll_to_line_does_not_raise(view):
+    view.set_text("\n".join(str(i) for i in range(200)))
+    view.scroll_to_line(100)                     # exercises SCI_VISIBLEFROMDOCLINE
