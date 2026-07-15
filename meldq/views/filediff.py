@@ -11,14 +11,17 @@ Kept separate from the 1.4-era meldq/filediff.py, which remains as reference.
 """
 
 import difflib
+import hashlib
+import os
 
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QFileSystemWatcher, QPoint, Qt
 from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygon
-from PyQt6.QtWidgets import QHBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from meldq.engine.diffutil import Differ
 from meldq.engine.matchers import MyersSequenceMatcher
 from meldq.views.linkmap import LinkMap
+from meldq.widgets.infobar import InfoBar
 from meldq.widgets.sciview import (
     KIND_CONFLICT,
     KIND_DELETE,
@@ -55,6 +58,16 @@ def _arrow_pixmap(direction, color="#707070", size=12):
     return pm
 
 
+def _file_token(path):
+    """A content hash of `path` (None if unreadable). Used to tell a real
+    external change from our own save when the on-disk file changes."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
 def load_file(path, codecs=("utf-8",)):
     """Read `path`, returning (text, encoding, eol). Tries `codecs` then falls
     back to latin-1 (which decodes any byte), so loading never fails; the
@@ -88,6 +101,13 @@ class FileDiffView(QWidget):
         self._theme = LIGHT
         self.differ = Differ()          # used for the 3-way path
 
+        # On-disk change monitor: a content token per pane distinguishes an
+        # external edit from our own save.
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.fileChanged.connect(self._on_file_changed_on_disk)
+        self._disk_token = [None] * num_panes
+        self.infobar = InfoBar()
+
         # LinkMaps between adjacent panes: 2-way uses opcodes(), 3-way pair_chunks.
         self.linkmaps = []
         for side in range(num_panes - 1):
@@ -99,13 +119,18 @@ class FileDiffView(QWidget):
                 LinkMap(self.panes[side], self.panes[side + 1],
                         chunks_fn, self.theme))
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.infobar)
+        panes_row = QHBoxLayout()
+        panes_row.setContentsMargins(0, 0, 0, 0)
+        panes_row.setSpacing(0)
         for side in range(num_panes - 1):
-            layout.addWidget(self.panes[side], 1)
-            layout.addWidget(self.linkmaps[side])
-        layout.addWidget(self.panes[-1], 1)
+            panes_row.addWidget(self.panes[side], 1)
+            panes_row.addWidget(self.linkmaps[side])
+        panes_row.addWidget(self.panes[-1], 1)
+        outer.addLayout(panes_row)
 
         # Merge arrows: outer panes point inward. 2-way: left→ / right←. 3-way:
         # pane0→ and pane2← both copy into the base (pane 1).
@@ -125,8 +150,55 @@ class FileDiffView(QWidget):
             text, encoding, eol = load_file(path)
             self._encoding[i] = encoding
             self._eol[i] = eol
+            self._disk_token[i] = _file_token(path)
             texts.append(text)
         self.set_texts(texts, paths)
+        self._watch_files()
+
+    def _watch_files(self):
+        if self._watcher.files():
+            self._watcher.removePaths(self._watcher.files())
+        paths = [p for p in self._paths if p]
+        if paths:
+            self._watcher.addPaths(paths)
+
+    def reload(self, pane):
+        """Re-read `pane`'s file, discarding its edits."""
+        path = self._paths[pane]
+        if path is None:
+            return
+        text, encoding, eol = load_file(path)
+        self._encoding[pane] = encoding
+        self._eol[pane] = eol
+        self._disk_token[pane] = _file_token(path)
+        self._loading = True
+        try:
+            self.panes[pane].set_text(text)
+        finally:
+            self._loading = False
+        self.panes[pane].setModified(False)
+        self._recompute()
+        self.infobar.clear()
+
+    def _on_file_changed_on_disk(self, path):
+        # Editors often replace-then-rename, which drops the watch; re-arm it.
+        if path not in self._watcher.files() and os.path.exists(path):
+            self._watcher.addPath(path)
+        current = _file_token(path)
+        for pane, pane_path in enumerate(self._paths):
+            if pane_path != path or current is None:
+                continue
+            if current == self._disk_token[pane]:
+                continue                    # our own save, or no real change
+            self._prompt_reload(pane, path)
+
+    def _prompt_reload(self, pane, path):
+        def ignore():
+            # Accept the on-disk state as known so we don't re-prompt for it.
+            self._disk_token[pane] = _file_token(path)
+        self.infobar.show_message(
+            '"%s" changed on disk.' % os.path.basename(path),
+            [("Reload", lambda: self.reload(pane)), ("Ignore", ignore)])
 
     def set_texts(self, texts, paths=None):
         paths = paths or [None] * len(texts)
@@ -160,6 +232,9 @@ class FileDiffView(QWidget):
             f.write(text.encode(self._encoding[pane] or "utf-8"))
         self._paths[pane] = path
         self.panes[pane].setModified(False)
+        self._disk_token[pane] = _file_token(path)   # so our write isn't flagged
+        if path not in self._watcher.files():
+            self._watcher.addPath(path)
 
     def theme(self):
         return self._theme
