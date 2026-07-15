@@ -14,6 +14,7 @@ import difflib
 from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from meldq.engine.matchers import MyersSequenceMatcher
+from meldq.views.linkmap import LinkMap
 from meldq.widgets.sciview import (
     KIND_DELETE,
     KIND_INSERT,
@@ -53,14 +54,18 @@ class FileDiffView(QWidget):
         self._eol = ["\n"] * num_panes
         self._syncing = False
         self._loading = False           # suppress re-diff while loading files
+        self._theme = LIGHT
+        self.linkmap = LinkMap(self)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(0)
+        layout.addWidget(self.panes[0], 1)
+        layout.addWidget(self.linkmap)
+        layout.addWidget(self.panes[1], 1)
         for view in self.panes:
             view.scrolled.connect(self._on_scrolled)
             view.textChanged.connect(self._on_text_changed)   # live re-diff
-            layout.addWidget(view, 1)
 
     # ----- loading ----------------------------------------------------------
 
@@ -106,9 +111,14 @@ class FileDiffView(QWidget):
         self._paths[pane] = path
         self.panes[pane].setModified(False)
 
+    def theme(self):
+        return self._theme
+
     def set_theme(self, theme):
+        self._theme = theme
         for view in self.panes:
             view.apply_theme(theme)
+        self.linkmap.update()
 
     # ----- rendering --------------------------------------------------------
 
@@ -136,6 +146,7 @@ class FileDiffView(QWidget):
                 left.add_chunk(l1, l2, KIND_REPLACE)
                 right.add_chunk(r1, r2, KIND_REPLACE)
                 self._inline_replace(left_lines, right_lines, l1, l2, r1, r2)
+        self.linkmap.update()
 
     def _on_text_changed(self):
         # Synchronous full re-diff. Correct + deterministic; M2 swaps in the
@@ -198,6 +209,7 @@ class FileDiffView(QWidget):
     # ----- sync scroll ------------------------------------------------------
 
     def _on_scrolled(self):
+        self.linkmap.update()           # connectors follow the scroll
         if self._syncing:
             return
         src = self.sender()
