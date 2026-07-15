@@ -1,10 +1,12 @@
-"""FileDiffView — the fresh 2-way text comparison view (milestone M1).
+"""FileDiffView — the fresh 2-way text comparison/merge view.
 
-The walking skeleton: two MeldSciView panes driven by the 3.24-aligned Myers
+M1 (walking skeleton): two MeldSciView panes driven by the 3.24-aligned Myers
 matcher, painting chunk backgrounds + inline highlights, with basic sync-scroll.
-View-only for now; editing, 3-way, merge (via the Differ), the ActionGutter and
-the LinkMap land in M2. Kept separate from the 1.4-era meldq/filediff.py, which
-remains as reference until it is retired.
+M2 so far: editable panes with live re-diff, and undoable 2-way merge
+(copy/delete a chunk). Still to come in M2: the Differ (incremental re-diff,
+3-way, conflicts), the ActionGutter merge UI, the LinkMap connectors, the full
+joined-region InlineMyers pass, and encoding-aware load/save + on-disk reload.
+Kept separate from the 1.4-era meldq/filediff.py, which remains as reference.
 """
 
 import difflib
@@ -29,19 +31,19 @@ def read_text(path):
 class FileDiffView(QWidget):
     def __init__(self, num_panes=2, parent=None):
         super().__init__(parent)
-        assert num_panes == 2, "M1 FileDiffView is 2-way only"
+        assert num_panes == 2, "FileDiffView is 2-way for now (3-way in M2)"
         self.num_panes = num_panes
         self.panes = [MeldSciView() for _ in range(num_panes)]
         self._paths = [None] * num_panes
-        self._lines = [[], []]
         self._syncing = False
+        self._loading = False           # suppress re-diff while loading files
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
         for view in self.panes:
-            view.setReadOnly(True)          # view-only skeleton
             view.scrolled.connect(self._on_scrolled)
+            view.textChanged.connect(self._on_text_changed)   # live re-diff
             layout.addWidget(view, 1)
 
     # ----- loading ----------------------------------------------------------
@@ -51,12 +53,15 @@ class FileDiffView(QWidget):
 
     def set_texts(self, texts, paths=None):
         paths = paths or [None] * len(texts)
-        for i, view in enumerate(self.panes):
-            text = texts[i] if i < len(texts) else ""
-            view.set_language_for(paths[i] if i < len(paths) else None)
-            view.set_text(text)
-            self._paths[i] = paths[i] if i < len(paths) else None
-            self._lines[i] = text.split("\n")
+        self._loading = True
+        try:
+            for i, view in enumerate(self.panes):
+                text = texts[i] if i < len(texts) else ""
+                view.set_language_for(paths[i] if i < len(paths) else None)
+                view.set_text(text)
+                self._paths[i] = paths[i] if i < len(paths) else None
+        finally:
+            self._loading = False
         self._render()
 
     def set_theme(self, theme):
@@ -65,16 +70,22 @@ class FileDiffView(QWidget):
 
     # ----- rendering --------------------------------------------------------
 
+    def _pane_lines(self, i):
+        return self.panes[i].text().split("\n")
+
     def opcodes(self):
         return MyersSequenceMatcher(
-            None, self._lines[0], self._lines[1]).get_difference_opcodes()
+            None, self._pane_lines(0), self._pane_lines(1)
+        ).get_difference_opcodes()
 
     def _render(self):
         for view in self.panes:
             view.clear_chunks()
             view.clear_inline()
         left, right = self.panes
-        for tag, l1, l2, r1, r2 in self.opcodes():
+        left_lines, right_lines = self._pane_lines(0), self._pane_lines(1)
+        for tag, l1, l2, r1, r2 in MyersSequenceMatcher(
+                None, left_lines, right_lines).get_difference_opcodes():
             if tag == "delete":
                 left.add_chunk(l1, l2, KIND_DELETE)
             elif tag == "insert":
@@ -82,16 +93,23 @@ class FileDiffView(QWidget):
             elif tag == "replace":
                 left.add_chunk(l1, l2, KIND_REPLACE)
                 right.add_chunk(r1, r2, KIND_REPLACE)
-                self._inline_replace(l1, l2, r1, r2)
+                self._inline_replace(left_lines, right_lines, l1, l2, r1, r2)
 
-    def _inline_replace(self, l1, l2, r1, r2):
+    def _on_text_changed(self):
+        # Synchronous full re-diff. Correct + deterministic; M2 swaps in the
+        # Differ's incremental change_sequence when large-file perf matters.
+        if self._loading:
+            return
+        self._render()
+
+    def _inline_replace(self, left_lines, right_lines, l1, l2, r1, r2):
         # Skeleton inline: only equal-height replaces get intra-line marks;
         # M2 does the full joined-region InlineMyers pass like 3.24.
         if (l2 - l1) != (r2 - r1):
             return
         for k in range(l2 - l1):
-            self._inline_line_pair(l1 + k, self._lines[0][l1 + k],
-                                   r1 + k, self._lines[1][r1 + k])
+            self._inline_line_pair(l1 + k, left_lines[l1 + k],
+                                   r1 + k, right_lines[r1 + k])
 
     def _inline_line_pair(self, left_line, left_text, right_line, right_text):
         sm = difflib.SequenceMatcher(None, left_text, right_text, autojunk=False)
@@ -102,6 +120,38 @@ class FileDiffView(QWidget):
                 self.panes[0].add_inline(left_line, i1, i2)
             if j2 > j1:
                 self.panes[1].add_inline(right_line, j1, j2)
+
+    # ----- merge ------------------------------------------------------------
+
+    @staticmethod
+    def _pane_range(chunk, pane):
+        _tag, l1, l2, r1, r2 = chunk
+        return (l1, l2) if pane == 0 else (r1, r2)
+
+    def chunk_at_line(self, pane, line):
+        """The change covering `line` in `pane`, or None. Zero-width chunks
+        (an insert has no line on the opposite pane) match at their position."""
+        for chunk in self.opcodes():
+            lo, hi = self._pane_range(chunk, pane)
+            if lo <= line < hi or (lo == hi and line == lo):
+                return chunk
+        return None
+
+    def copy_chunk(self, chunk, src_pane, dst_pane):
+        """Replace dst_pane's side of `chunk` with src_pane's lines (undoable)."""
+        src_lo, src_hi = self._pane_range(chunk, src_pane)
+        dst_lo, dst_hi = self._pane_range(chunk, dst_pane)
+        src_lines = self._pane_lines(src_pane)
+        dst_lines = self._pane_lines(dst_pane)
+        seg = src_lines[src_lo:src_hi]
+        new_dst = dst_lines[:dst_lo] + seg + dst_lines[dst_hi:]
+        self.panes[dst_pane].replace_all_text("\n".join(new_dst))
+
+    def delete_chunk(self, chunk, pane):
+        """Remove pane's side of `chunk` (undoable)."""
+        lo, hi = self._pane_range(chunk, pane)
+        lines = self._pane_lines(pane)
+        self.panes[pane].replace_all_text("\n".join(lines[:lo] + lines[hi:]))
 
     # ----- sync scroll ------------------------------------------------------
 

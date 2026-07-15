@@ -100,6 +100,7 @@ class MeldSciView(QsciScintilla):
         self._lexer = None              # hold a ref; QScintilla doesn't own it
 
         self.setUtf8(True)
+        self.setEolMode(QsciScintilla.EolMode.EolUnix)   # display in \n; text() is \n-only
         self.setIndentationsUseTabs(False)
         self.setTabWidth(4)
 
@@ -142,7 +143,17 @@ class MeldSciView(QsciScintilla):
         ro = self.isReadOnly()
         self.setReadOnly(False)
         self.setText(text)
+        self.convertEols(QsciScintilla.EolMode.EolUnix)
         self.setReadOnly(ro)
+
+    def replace_all_text(self, text):
+        """Replace the whole document as ONE undoable edit (native Scintilla
+        undo), unlike setText which resets the document and clears undo. Used
+        by merge operations so they can be undone."""
+        self.beginUndoAction()
+        self.selectAll(True)
+        self.replaceSelectedText(text)
+        self.endUndoAction()
 
     def set_language_for(self, path):
         ext = os.path.splitext(path or "")[1].lower()

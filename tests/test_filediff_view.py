@@ -96,3 +96,62 @@ def test_sync_scroll_no_infinite_recursion(fd):
     fd.panes[0].scroll_to_line(120)
     fd._on_scrolled()                           # would loop if unguarded
     assert fd._syncing is False
+
+
+# ----- M2: editing + live re-diff + merge -----------------------------------
+
+def test_live_rediff_on_edit(fd):
+    fd.set_texts(["one\ntwo\nthree\n", "one\ntwo\nthree\n"])
+    assert kinds(fd, 0, 1) == []                # identical -> clean
+    fd.panes[1].set_text("one\nCHANGED\nthree\n")   # edits fire textChanged
+    assert KIND_REPLACE in kinds(fd, 0, 1)      # diff updated live
+    assert KIND_REPLACE in kinds(fd, 1, 1)
+
+
+def test_chunk_at_line(fd):
+    fd.set_texts(["a\nOLD\nb\n", "a\nNEW\nb\n"])
+    chunk = fd.chunk_at_line(0, 1)
+    assert chunk is not None and chunk[0] == "replace"
+    assert fd.chunk_at_line(0, 0) is None       # unchanged line
+
+
+def test_copy_chunk_left_to_right(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    chunk = fd.chunk_at_line(0, 1)
+    fd.copy_chunk(chunk, src_pane=0, dst_pane=1)
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"  # right now matches left
+    for ln in range(3):                          # and the diff is now empty
+        assert kinds(fd, 0, ln) == [] and kinds(fd, 1, ln) == []
+
+
+def test_copy_chunk_right_to_left(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    chunk = fd.chunk_at_line(1, 1)
+    fd.copy_chunk(chunk, src_pane=1, dst_pane=0)
+    assert fd.panes[0].text() == "a\nRIGHT\nb\n"
+
+
+def test_copy_insert_chunk_adds_lines(fd):
+    fd.set_texts(["a\nb\n", "a\nX\nY\nb\n"])      # right has 2 inserted lines
+    chunk = fd.chunk_at_line(1, 1)
+    assert chunk[0] == "insert"
+    fd.copy_chunk(chunk, src_pane=1, dst_pane=0)  # bring the insert into left
+    assert fd.panes[0].text() == "a\nX\nY\nb\n"
+
+
+def test_delete_chunk(fd):
+    fd.set_texts(["a\nGONE\nb\n", "a\nb\n"])
+    chunk = fd.chunk_at_line(0, 1)
+    assert chunk[0] == "delete"
+    fd.delete_chunk(chunk, pane=0)
+    assert fd.panes[0].text() == "a\nb\n"         # deletion resolves the diff
+
+
+def test_merge_is_undoable(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    chunk = fd.chunk_at_line(0, 1)
+    fd.copy_chunk(chunk, src_pane=0, dst_pane=1)
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"
+    fd.panes[1].undo()                            # native Scintilla undo
+    assert fd.panes[1].text() == "a\nRIGHT\nb\n"  # merge reverted
+    assert KIND_REPLACE in kinds(fd, 1, 1)        # and the diff re-renders
