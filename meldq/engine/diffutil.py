@@ -19,6 +19,8 @@ import difflib
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from meldq.engine.matchers import MyersSequenceMatcher
+
 ################################################################################
 #
 # Differ
@@ -72,7 +74,11 @@ class Differ(QObject):
 
     diffs_changed = pyqtSignal()
 
-    _matcher = IncrementalSequenceMatcher
+    # 3.24 (meld/matchers/diffutil.py:80) diffs with MyersSequenceMatcher +
+    # postprocess; the 1.4 port used the difflib IncrementalSequenceMatcher,
+    # which produced finer, non-3.24 chunk boundaries. IncrementalSequenceMatcher
+    # is kept below only for the corpus cross-check test.
+    _matcher = MyersSequenceMatcher
 
     def __init__(self):
         # Internally, diffs are stored from text1 -> text0 and text1 -> text2.

@@ -15,9 +15,27 @@
 ### Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 import difflib
+import typing
+
+
+class DiffChunk(typing.NamedTuple):
+    """A single diff opcode: (tag, start_a, end_a, start_b, end_b).
+
+    Port of meld/matchers/myers.py:60. 3.24's ``to_iters()`` helper is
+    Gtk-buffer-specific and intentionally omitted; FileDiff maps the line
+    ranges onto QScintilla positions itself.
+    """
+
+    tag: str
+    start_a: int
+    end_a: int
+    start_b: int
+    end_b: int
 
 
 def find_common_prefix(a, b):
+    if not a or not b:              # 3.24 guard; ours crashed on an empty side
+        return 0
     if a[0] == b[0]:
         pointermax = min(len(a), len(b))
         pointermid = pointermax
@@ -33,6 +51,8 @@ def find_common_prefix(a, b):
 
 
 def find_common_suffix(a, b):
+    if not a or not b:              # 3.24 guard; ours crashed on an empty side
+        return 0
     if a[-1] == b[-1]:
         pointermax = min(len(a), len(b))
         pointermid = pointermax
@@ -67,8 +87,41 @@ class MyersSequenceMatcher(difflib.SequenceMatcher):
                 pass
         return self.matching_blocks
 
+    def get_opcodes(self):
+        opcodes = super().get_opcodes()
+        return [DiffChunk._make(chunk) for chunk in opcodes]
+
     def get_difference_opcodes(self):
-        return [c for c in self.get_opcodes() if c[0] != "equal"]
+        return [chunk for chunk in self.get_opcodes() if chunk.tag != "equal"]
+
+    def postprocess(self):
+        """Coalesce adjacent matching blocks the greedy Myers snake split apart.
+
+        Backward-scan the matching blocks and merge a block into its successor
+        when they abut on either sequence and the intervening slices are equal.
+        Verbatim from meld/matchers/myers.py:167; without it our chunk
+        boundaries are finer than 3.24's on the same inputs.
+        """
+        mb = [self.matching_blocks[-1]]
+        i = len(self.matching_blocks) - 2
+        while i >= 0:
+            cur_a, cur_b, cur_len = self.matching_blocks[i]
+            i -= 1
+            while i >= 0:
+                prev_a, prev_b, prev_len = self.matching_blocks[i]
+                if prev_b + prev_len == cur_b or prev_a + prev_len == cur_a:
+                    prev_slice_a = self.a[cur_a - prev_len:cur_a]
+                    prev_slice_b = self.b[cur_b - prev_len:cur_b]
+                    if prev_slice_a == prev_slice_b:
+                        cur_b -= prev_len
+                        cur_a -= prev_len
+                        cur_len += prev_len
+                        i -= 1
+                        continue
+                break
+            mb.append((cur_a, cur_b, cur_len))
+        mb.reverse()
+        self.matching_blocks = mb
 
     def preprocess(self):
         """
@@ -259,4 +312,5 @@ class MyersSequenceMatcher(difflib.SequenceMatcher):
                     lastsnake = node
                     break
         self.build_matching_blocks(lastsnake, snakes)
+        self.postprocess()
         yield 1
