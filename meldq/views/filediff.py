@@ -236,6 +236,20 @@ class FileDiffView(QWidget):
         if path not in self._watcher.files():
             self._watcher.addPath(path)
 
+    def make_patch(self, left_pane=0, right_pane=1, reverse=False):
+        """A unified diff between two panes (export). `reverse` swaps old/new;
+        for a 3-way view pass the pair to compare. Round-trips with
+        meldq.patchimport."""
+        a = self.panes[left_pane].text().splitlines(keepends=True)
+        b = self.panes[right_pane].text().splitlines(keepends=True)
+        la = self._paths[left_pane] or "a"
+        lb = self._paths[right_pane] or "b"
+        if reverse:
+            a, b, la, lb = b, a, lb, la
+        return "".join(difflib.unified_diff(
+            a, b, fromfile="a/" + os.path.basename(la),
+            tofile="b/" + os.path.basename(lb)))
+
     def theme(self):
         return self._theme
 
