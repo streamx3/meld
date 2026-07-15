@@ -130,7 +130,8 @@ Standalone runners exist per view (`python -m meldq.views.{filediff|dirdiff|vcvi
 **there is no unifying app shell yet.**
 
 ### Remaining (rough order)
-1. **M4 VC actions** — commit dialog, add/remove/revert/resolve, conflict 3-way.
+1. **M4 VC** — DONE for git: browse, compare-vs-repo, add/revert/remove, commit
+   (CommitDialog). Deferred: conflict 3-way merge (resolve), push/pull.
 2. **M5 Patch dialog** — a small UI over `meldq/patch.py`; import = open
    FileDiff(source, apply(source, patch)); export = the 3-pane side-select dialog.
 3. **M6 the shell** — a real MeldWindow: tabs hosting the three views,
