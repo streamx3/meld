@@ -11,7 +11,7 @@ compare/copy/trash-delete actions layer on next.
 import os
 import shutil
 
-from PyQt6.QtCore import QFile, Qt, pyqtSignal
+from PyQt6.QtCore import QFile, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QBrush,
@@ -49,6 +49,16 @@ _STYLE = {
 }
 
 
+def _row_category(entry):
+    """Collapse an entry's per-pane states to one filter category: MODIFIED
+    (differing or error), NEW (present on some panes only), else NORMAL."""
+    if STATE_MODIFIED in entry.states or STATE_ERROR in entry.states:
+        return STATE_MODIFIED
+    if STATE_NEW in entry.states:
+        return STATE_NEW
+    return STATE_NORMAL
+
+
 class DirDiffView(QWidget):
     # Emitted with the list of existing files to compare when a file row is
     # activated; the host opens a FileDiff. Mirrors the MeldDoc create_diff.
@@ -61,6 +71,7 @@ class DirDiffView(QWidget):
         self._roots = None
         self.name_filters = []
         self.regexes = []
+        self.state_filters = {STATE_NORMAL, STATE_NEW, STATE_MODIFIED}
 
         self.model = QStandardItemModel()
         self.model.setColumnCount(num_panes)
@@ -86,15 +97,30 @@ class DirDiffView(QWidget):
         self._roots = [os.path.abspath(r) for r in roots]
         self.model.setHorizontalHeaderLabels(
             [os.path.basename(r.rstrip(os.sep)) or r for r in self._roots])
-        self.refresh()
+        self._populate(auto_expand_diffs=True)
 
     def refresh(self):
+        # Re-scan, preserving the current expansion (a mutating action or a
+        # re-scan shouldn't collapse the tree).
+        self._populate(auto_expand_diffs=False)
+
+    def set_state_filters(self, states):
+        """Show only rows in these categories (STATE_NORMAL/NEW/MODIFIED)."""
+        self.state_filters = set(states)
+        self.refresh()
+
+    def _populate(self, auto_expand_diffs):
+        expanded = self._expanded_relpaths()
         self.model.removeRows(0, self.model.rowCount())
         if not self._roots:
             return
+        entries = list(walk(self._roots, self.name_filters, self.regexes))
+        keep = self._filter_entries(entries)
         items_by_rel = {}
         differing = []
-        for entry in walk(self._roots, self.name_filters, self.regexes):
+        for entry in entries:
+            if entry.relpath not in keep:
+                continue
             parent_rel = os.path.dirname(entry.relpath)
             parent_item = items_by_rel.get(parent_rel) or \
                 self.model.invisibleRootItem()
@@ -103,7 +129,49 @@ class DirDiffView(QWidget):
             items_by_rel[entry.relpath] = row[0]
             if entry.different:
                 differing.append(entry.relpath)
-        self._expand_to(differing, items_by_rel)
+
+        to_expand = set(expanded)
+        if auto_expand_diffs:
+            for rel in differing:
+                to_expand.update(self._ancestors(rel))
+        for rel in sorted(to_expand):
+            item = items_by_rel.get(rel)
+            if item is not None:
+                self.tree.expand(item.index())
+
+    def _filter_entries(self, entries):
+        """Relpaths to show: files matching the state filter (+ dirs that match,
+        e.g. a wholly-new folder), plus every ancestor directory of a shown row
+        so the path to it stays visible."""
+        if self.state_filters >= {STATE_NORMAL, STATE_NEW, STATE_MODIFIED}:
+            return {e.relpath for e in entries}
+        keep = set()
+        for entry in entries:
+            if _row_category(entry) in self.state_filters:
+                keep.add(entry.relpath)
+        for rel in list(keep):
+            keep.update(self._ancestors(rel))
+        return keep
+
+    @staticmethod
+    def _ancestors(relpath):
+        parts = relpath.split(os.sep)
+        return {os.sep.join(parts[:i]) for i in range(1, len(parts))}
+
+    def _expanded_relpaths(self):
+        result = set()
+
+        def visit(parent):
+            for r in range(self.model.rowCount(parent)):
+                idx = self.model.index(r, 0, parent)
+                if self.tree.isExpanded(idx):
+                    rel = self.row_relpath(idx)
+                    if rel:
+                        result.add(rel)
+                    visit(idx)
+
+        visit(QModelIndex())
+        return result
 
     def _make_row(self, entry):
         items = []
@@ -132,17 +200,6 @@ class DirDiffView(QWidget):
     @staticmethod
     def _icon(isdir):
         return QIcon.fromTheme("folder" if isdir else "text-x-generic")
-
-    def _expand_to(self, differing, items_by_rel):
-        to_expand = set()
-        for rel in differing:
-            parts = rel.split(os.sep)
-            for i in range(1, len(parts)):        # every ancestor directory
-                to_expand.add(os.sep.join(parts[:i]))
-        for rel in sorted(to_expand):
-            item = items_by_rel.get(rel)
-            if item is not None:
-                self.tree.expand(item.index())
 
     # ----- queries (for tests / later actions) ------------------------------
 

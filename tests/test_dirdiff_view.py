@@ -176,6 +176,46 @@ def test_delete_removes_and_updates(dd, tmp_path):
     assert dd.row_state(top_rows(dd)["f.txt"], 0) == STATE_MISSING
 
 
+def test_state_filter_hides_same(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "same.txt", b"a\n")
+    write(right / "same.txt", b"a\n")
+    write(left / "diff.txt", b"a\n")
+    write(right / "diff.txt", b"b\n")
+    dd.set_roots([str(left), str(right)])
+    assert set(top_rows(dd)) == {"same.txt", "diff.txt"}
+    dd.set_state_filters({STATE_MODIFIED, STATE_NEW})    # drop "same" (NORMAL)
+    assert set(top_rows(dd)) == {"diff.txt"}
+
+
+def test_state_filter_keeps_ancestor_dirs(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "sub" / "same.txt", b"a\n")
+    write(right / "sub" / "same.txt", b"a\n")
+    write(left / "sub" / "diff.txt", b"a\n")
+    write(right / "sub" / "diff.txt", b"b\n")
+    dd.set_roots([str(left), str(right)])
+    dd.set_state_filters({STATE_MODIFIED})               # only the changed file
+    rows = top_rows(dd)
+    assert "sub" in rows                                 # ancestor dir kept
+    sub = rows["sub"]
+    kids = [dd.row_relpath(dd.model.index(r, 0, sub))
+            for r in range(dd.model.rowCount(sub))]
+    assert all(k.endswith("diff.txt") for k in kids)     # same.txt hidden
+
+
+def test_refresh_preserves_expansion(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "sub" / "a.txt", b"1\n")
+    write(right / "sub" / "a.txt", b"1\n")               # identical: not auto-expanded
+    dd.set_roots([str(left), str(right)])
+    sub = top_rows(dd)["sub"]
+    dd.tree.expand(sub)                                  # user expands it
+    assert dd.tree.isExpanded(sub)
+    dd.refresh()
+    assert dd.tree.isExpanded(top_rows(dd)["sub"])       # still expanded after re-scan
+
+
 def test_three_way(qapp, qtbot, tmp_path):
     view = DirDiffView(3)
     qtbot.addWidget(view)
