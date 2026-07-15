@@ -1,0 +1,123 @@
+"""M3: DirDiffView tree — populated from the dircompare core."""
+
+import pytest
+
+from meldq.dircompare import (
+    STATE_MISSING,
+    STATE_MODIFIED,
+    STATE_NEW,
+    STATE_NORMAL,
+)
+from meldq.views.dirdiff import ROLE_REL, DirDiffView
+
+
+def write(path, data=b"x\n"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+@pytest.fixture
+def dd(qapp, qtbot):
+    view = DirDiffView(2)
+    view.resize(700, 400)
+    qtbot.addWidget(view)
+    return view
+
+
+def top_rows(view):
+    """{name: index} for the top-level rows (pane 0 column)."""
+    model = view.model
+    out = {}
+    for r in range(model.rowCount()):
+        idx = model.index(r, 0)
+        # a row's name is whichever pane has it; read the rel role
+        rel = view.row_relpath(idx)
+        out[rel] = idx
+    return out
+
+
+def test_top_level_states(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "same.txt", b"a\n")
+    write(right / "same.txt", b"a\n")
+    write(left / "diff.txt", b"a\n")
+    write(right / "diff.txt", b"b\n")
+    write(left / "onlyleft.txt", b"a\n")
+    write(right / "onlyright.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+
+    rows = top_rows(dd)
+    assert set(rows) == {"same.txt", "diff.txt", "onlyleft.txt", "onlyright.txt"}
+    assert dd.row_state(rows["same.txt"], 0) == STATE_NORMAL
+    assert dd.row_state(rows["diff.txt"], 0) == STATE_MODIFIED
+    assert dd.row_state(rows["onlyleft.txt"], 0) == STATE_NEW
+    assert dd.row_state(rows["onlyleft.txt"], 1) == STATE_MISSING
+
+
+def test_missing_cell_is_blank(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "onlyleft.txt", b"a\n")
+    right.mkdir()
+    dd.set_roots([str(left), str(right)])
+    idx = top_rows(dd)["onlyleft.txt"]
+    left_item = dd.model.itemFromIndex(idx.siblingAtColumn(0))
+    right_item = dd.model.itemFromIndex(idx.siblingAtColumn(1))
+    assert left_item.text() == "onlyleft.txt"
+    assert right_item.text() == ""          # absent on the right
+
+
+def test_subdir_nested_rows(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "sub" / "nested.txt", b"1\n")
+    write(right / "sub" / "nested.txt", b"2\n")
+    dd.set_roots([str(left), str(right)])
+
+    sub = top_rows(dd)["sub"]
+    assert dd.model.hasChildren(sub)
+    child = dd.model.index(0, 0, sub)
+    assert dd.row_relpath(child).endswith("nested.txt")
+    assert dd.row_state(child, 0) == STATE_MODIFIED
+
+
+def test_expands_to_reveal_difference(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "sub" / "nested.txt", b"1\n")
+    write(right / "sub" / "nested.txt", b"2\n")
+    dd.set_roots([str(left), str(right)])
+    sub = top_rows(dd)["sub"]
+    assert dd.tree.isExpanded(sub)          # ancestor of the differing file
+
+
+def test_refresh_reflects_changes(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"a\n")
+    write(right / "f.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+    assert dd.row_state(top_rows(dd)["f.txt"], 0) == STATE_NORMAL
+    (right / "f.txt").write_bytes(b"changed\n")
+    dd.refresh()
+    assert dd.row_state(top_rows(dd)["f.txt"], 0) == STATE_MODIFIED
+
+
+def test_name_filter_applied(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "keep.txt", b"a\n")
+    write(right / "keep.txt", b"a\n")
+    write(left / "junk.bak", b"a\n")
+    write(right / "junk.bak", b"a\n")
+    dd.name_filters = [lambda n: not n.endswith(".bak")]
+    dd.set_roots([str(left), str(right)])
+    assert set(top_rows(dd)) == {"keep.txt"}
+
+
+def test_three_way(qapp, qtbot, tmp_path):
+    view = DirDiffView(3)
+    qtbot.addWidget(view)
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    write(a / "f.txt", b"1\n")
+    write(b / "f.txt", b"1\n")
+    write(c / "f.txt", b"2\n")
+    view.set_roots([str(a), str(b), str(c)])
+    assert view.model.columnCount() == 3
+    idx = view.model.index(0, 0)
+    assert view.row_state(idx, 2) == STATE_MODIFIED
