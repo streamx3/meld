@@ -275,3 +275,35 @@ def test_action_markers_cleared_after_merge(fd):
     fd.panes[0].action_clicked.emit(1)
     assert not fd.panes[0].has_action_marker(1)     # diff resolved -> no arrows
     assert not fd.panes[1].has_action_marker(1)
+
+
+# ----- M2: next/previous change navigation ----------------------------------
+
+def test_next_diff_walks_chunks(fd):
+    # changes at lines 1 and 4 on the left
+    fd.set_texts(["a\nX\nb\nc\nY\nd\n", "a\n1\nb\nc\n2\nd\n"])
+    fd.panes[0].setCursorPosition(0, 0)
+    assert fd.next_diff(pane=0) == 1                # first change
+    assert fd.next_diff(pane=0) == 4                # second change
+    assert fd.next_diff(pane=0) is None             # no more below
+
+
+def test_prev_diff_walks_back(fd):
+    fd.set_texts(["a\nX\nb\nc\nY\nd\n", "a\n1\nb\nc\n2\nd\n"])
+    fd.panes[0].setCursorPosition(5, 0)
+    assert fd.prev_diff(pane=0) == 4
+    assert fd.prev_diff(pane=0) == 1
+    assert fd.prev_diff(pane=0) is None
+
+
+def test_next_diff_moves_cursor(fd):
+    fd.set_texts(["a\nb\nCHANGED\nd\n", "a\nb\ndifferent\nd\n"])
+    fd.panes[0].setCursorPosition(0, 0)
+    fd.next_diff(pane=0)
+    assert fd.panes[0].getCursorPosition()[0] == 2   # cursor jumped to the chunk
+
+
+def test_next_diff_none_when_identical(fd):
+    fd.set_texts(["a\nb\n", "a\nb\n"])
+    fd.panes[0].setCursorPosition(0, 0)
+    assert fd.next_diff(pane=0) is None

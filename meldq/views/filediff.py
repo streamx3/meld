@@ -259,6 +259,35 @@ class FileDiffView(QWidget):
         if chunk is not None:
             self.copy_chunk(chunk, src_pane=pane, dst_pane=1 - pane)
 
+    # ----- navigation -------------------------------------------------------
+
+    def _focused_pane(self):
+        for i, view in enumerate(self.panes):
+            if view.hasFocus():
+                return i
+        return 0
+
+    def next_diff(self, pane=None):
+        """Move the cursor to the next change below it; returns its line or None."""
+        return self._go_diff(1, pane)
+
+    def prev_diff(self, pane=None):
+        return self._go_diff(-1, pane)
+
+    def _go_diff(self, direction, pane):
+        if pane is None:
+            pane = self._focused_pane()
+        line = self.panes[pane].getCursorPosition()[0]
+        starts = [self._pane_range(c, pane)[0] for c in self.opcodes()]
+        if direction > 0:
+            target = next((s for s in starts if s > line), None)
+        else:
+            target = next((s for s in reversed(starts) if s < line), None)
+        if target is not None:
+            self.panes[pane].setCursorPosition(target, 0)
+            self.panes[pane].ensureLineVisible(target)
+        return target
+
     # ----- sync scroll ------------------------------------------------------
 
     def _on_scrolled(self):
