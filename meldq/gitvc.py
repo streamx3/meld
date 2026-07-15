@@ -82,3 +82,26 @@ def repo_file_content(repo_root, relpath, ref="HEAD"):
     not exist there (e.g. an untracked/added file)."""
     proc = _run(repo_root, ["show", "%s:%s" % (ref, relpath)], binary=True)
     return proc.stdout if proc.returncode == 0 else None
+
+
+def add(repo_root, relpath):
+    """Stage `relpath` (start tracking / mark resolved)."""
+    return _run(repo_root, ["add", "--", relpath]).returncode == 0
+
+
+def remove(repo_root, relpath):
+    """git-remove `relpath` (and delete it from the work tree)."""
+    return _run(repo_root, ["rm", "-r", "--", relpath]).returncode == 0
+
+
+def revert(repo_root, relpath):
+    """Discard working changes to a tracked `relpath` (restore from HEAD). For
+    an untracked file, delete it. Returns True on success."""
+    if status(repo_root).get(relpath) == STATE_NEW and \
+            repo_file_content(repo_root, relpath) is None:
+        try:
+            os.remove(os.path.join(repo_root, relpath))
+            return True
+        except OSError:
+            return False
+    return _run(repo_root, ["checkout", "HEAD", "--", relpath]).returncode == 0

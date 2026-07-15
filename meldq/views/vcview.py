@@ -10,8 +10,15 @@ import os
 import tempfile
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QStandardItem, QStandardItemModel
-from PyQt6.QtWidgets import QTreeView, QVBoxLayout, QWidget
+from PyQt6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QStandardItem,
+    QStandardItemModel,
+)
+from PyQt6.QtWidgets import QMenu, QTreeView, QVBoxLayout, QWidget
 
 from meldq import gitvc
 from meldq.widgets.infobar import InfoBar
@@ -53,6 +60,8 @@ class VcView(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
         self.tree.activated.connect(self.on_activated)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._context_menu)
         self.infobar = InfoBar()
 
         layout = QVBoxLayout(self)
@@ -116,6 +125,37 @@ class VcView(QWidget):
         right = working if os.path.exists(working) else self._materialize(
             relpath + ".missing", b"")
         self.create_diff.emit([left, right])
+
+    # ----- vc actions -------------------------------------------------------
+
+    def _act(self, index, fn):
+        relpath = self.row_relpath(index)
+        if relpath is not None and self.repo_root is not None:
+            fn(self.repo_root, relpath)
+            self.refresh()
+
+    def add(self, index):
+        self._act(index, gitvc.add)
+
+    def remove(self, index):
+        self._act(index, gitvc.remove)
+
+    def revert(self, index):
+        self._act(index, gitvc.revert)
+
+    def _context_menu(self, pos):
+        index = self.tree.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = QMenu(self.tree)
+        for label, slot in (("Compare", lambda: self.on_activated(index)),
+                            ("Add", lambda: self.add(index)),
+                            ("Revert", lambda: self.revert(index)),
+                            ("Remove", lambda: self.remove(index))):
+            action = QAction(label, menu)
+            action.triggered.connect(slot)
+            menu.addAction(action)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _materialize(self, relpath, data):
         """Write `data` (the repo version, or empty) to a temp file mirroring

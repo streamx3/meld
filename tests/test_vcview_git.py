@@ -98,3 +98,41 @@ def test_refresh_reflects_new_change(vc, repo):
     (repo / "tracked.txt").write_text("edited\n")
     vc.refresh()
     assert rows(vc) == {"tracked.txt": gitvc.STATE_MODIFIED}
+
+
+# ----- vc actions -----------------------------------------------------------
+
+def test_backend_add_stages_untracked(repo):
+    (repo / "fresh.txt").write_text("x\n")
+    assert gitvc.status(str(repo))["fresh.txt"] == gitvc.STATE_NEW
+    assert gitvc.add(str(repo), "fresh.txt")
+    # still NEW, but now staged (A ) rather than untracked (??) -> classify NEW
+    assert gitvc.status(str(repo))["fresh.txt"] == gitvc.STATE_NEW
+
+
+def test_backend_revert_restores_modified(repo):
+    (repo / "tracked.txt").write_text("changed\n")
+    assert gitvc.revert(str(repo), "tracked.txt")
+    assert (repo / "tracked.txt").read_text() == "original\n"
+    assert gitvc.status(str(repo)) == {}
+
+
+def test_backend_revert_deletes_untracked(repo):
+    (repo / "junk.txt").write_text("y\n")
+    assert gitvc.revert(str(repo), "junk.txt")
+    assert not (repo / "junk.txt").exists()
+
+
+def test_backend_remove(repo):
+    assert gitvc.remove(str(repo), "tracked.txt")
+    assert not (repo / "tracked.txt").exists()
+    assert gitvc.status(str(repo))["tracked.txt"] == gitvc.STATE_REMOVED
+
+
+def test_view_revert_action_refreshes(vc, repo):
+    (repo / "tracked.txt").write_text("changed\n")
+    vc.set_location(str(repo))
+    assert rows(vc) == {"tracked.txt": gitvc.STATE_MODIFIED}
+    vc.revert(vc.model.index(0, 0))
+    assert rows(vc) == {}                     # reverted -> clean, list refreshed
+    assert (repo / "tracked.txt").read_text() == "original\n"
