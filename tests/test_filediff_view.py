@@ -62,13 +62,25 @@ def test_inline_highlight_within_replace(fd):
     assert not left.has_inline_at(0, 4)         # shared 'l','o' not marked
 
 
-def test_inline_skipped_for_unequal_height_replace(fd):
-    # A replace whose sides differ in line count: skeleton keeps the block
-    # background but adds no intra-line marks (M2 handles the joined region).
+def test_inline_across_unequal_height_replace(fd):
+    # A replace whose sides differ in line count now gets intra-line marks via
+    # the joined-region pass (the M1 skeleton skipped these).
     fd.set_texts(["x\ny\n", "P\nQ\nR\n"])
     assert KIND_REPLACE in kinds(fd, 0, 0)
     assert KIND_REPLACE in kinds(fd, 1, 0)
-    assert not fd.panes[0].has_inline_at(0, 0)
+    assert fd.panes[0].has_inline_at(0, 0)      # 'x' differs from 'P'
+    assert fd.panes[1].has_inline_at(0, 0)
+
+
+def test_inline_multiline_region_marks_each_line(fd):
+    # A 2-line replace where only the 2nd line's tail changes: the mark lands
+    # on the right line, offset within it, not on the joining newline.
+    fd.set_texts(["keep\nfoo bar\n", "keep\nfoo baz\n"])
+    left, right = fd.panes
+    assert left.has_inline_at(1, 6)             # 'r' vs 'z' at col 6
+    assert right.has_inline_at(1, 6)
+    assert not left.has_inline_at(1, 0)         # 'foo ba' shared
+    assert not left.has_inline_at(0, 0)         # line 0 identical -> no mark
 
 
 def test_rerender_clears_previous(fd):

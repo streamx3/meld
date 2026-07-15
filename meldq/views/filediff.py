@@ -155,24 +155,39 @@ class FileDiffView(QWidget):
             return
         self._render()
 
-    def _inline_replace(self, left_lines, right_lines, l1, l2, r1, r2):
-        # Skeleton inline: only equal-height replaces get intra-line marks;
-        # M2 does the full joined-region InlineMyers pass like 3.24.
-        if (l2 - l1) != (r2 - r1):
-            return
-        for k in range(l2 - l1):
-            self._inline_line_pair(l1 + k, left_lines[l1 + k],
-                                   r1 + k, right_lines[r1 + k])
+    _INLINE_MAX = 10000     # skip intra-line diffing of huge replace regions
 
-    def _inline_line_pair(self, left_line, left_text, right_line, right_text):
-        sm = difflib.SequenceMatcher(None, left_text, right_text, autojunk=False)
+    def _inline_replace(self, left_lines, right_lines, l1, l2, r1, r2):
+        # Join each side's replace region and diff at the character level, so
+        # unequal-height replaces still get intra-line marks (the M1 skeleton
+        # only handled line-for-line). 3.24 uses InlineMyers (k-mer) here for
+        # speed; difflib is correct and fine until large-file perf matters.
+        left_region = left_lines[l1:l2]
+        right_region = right_lines[r1:r2]
+        text_l = "\n".join(left_region)
+        text_r = "\n".join(right_region)
+        if len(text_l) > self._INLINE_MAX and len(text_r) > self._INLINE_MAX:
+            return
+        sm = difflib.SequenceMatcher(None, text_l, text_r, autojunk=False)
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
             if tag == "equal":
                 continue
             if i2 > i1:
-                self.panes[0].add_inline(left_line, i1, i2)
+                self._mark_region(0, l1, left_region, i1, i2)
             if j2 > j1:
-                self.panes[1].add_inline(right_line, j1, j2)
+                self._mark_region(1, r1, right_region, j1, j2)
+
+    def _mark_region(self, pane, start_line, region_lines, o1, o2):
+        # Map a [o1, o2) char range in "\n".join(region_lines) to per-line
+        # inline marks; the joining newlines are separators, never highlighted.
+        pos = 0
+        for k, line in enumerate(region_lines):
+            line_start, line_end = pos, pos + len(line)
+            a, b = max(o1, line_start), min(o2, line_end)
+            if a < b:
+                self.panes[pane].add_inline(start_line + k, a - line_start,
+                                            b - line_start)
+            pos = line_end + 1      # + the '\n' separator
 
     # ----- merge ------------------------------------------------------------
 
