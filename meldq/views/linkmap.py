@@ -1,13 +1,12 @@
-"""LinkMap — the connector ribbons drawn between the two FileDiff panes.
+"""LinkMap — connector ribbons drawn between two adjacent FileDiff panes.
 
-For each diff chunk it fills a curved band from the left pane's line range to the
-right pane's range, coloured by kind. It reads pixel positions from the panes'
-`y_for_line()` (MeldSciView), so it stays in sync as they scroll. Geometry is
-separated from painting (`chunk_shapes()`) so it can be tested without pixels.
+For each chunk it fills a curved band from the left pane's line range to the
+right's, coloured by kind, reading pixel positions from the panes' `y_for_line()`
+so it tracks scrolling. Geometry (`chunk_shapes`) is separated from painting so
+it can be tested without pixels. Generic over any adjacent pane pair, so a
+3-way view uses two of them (pane0–pane1 and pane1–pane2).
 
-This is the connectors-only linkmap: 3.24 removed the 1.4 click-to-merge icons
-(that interaction moved to the ActionGutter), so nothing is drawn here but the
-bands and their outlines.
+Connectors-only: 3.24 moved click-to-merge off the linkmap onto the gutter.
 """
 
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
@@ -17,30 +16,32 @@ _KIND_BG = {
     "delete": "delete_bg",
     "insert": "insert_bg",
     "replace": "replace_bg",
+    "conflict": "conflict_bg",
 }
 
 
 class LinkMap(QWidget):
     WIDTH = 40
 
-    def __init__(self, filediff, parent=None):
+    def __init__(self, left_view, right_view, chunks_fn, theme_fn, parent=None):
         super().__init__(parent)
-        self._fd = filediff
+        self._left = left_view
+        self._right = right_view
+        self._chunks_fn = chunks_fn      # () -> [(tag, l_lo, l_hi, r_lo, r_hi)]
+        self._theme_fn = theme_fn
         self.setFixedWidth(self.WIDTH)
 
     def chunk_shapes(self):
         """(tag, l_top, l_bottom, r_top, r_bottom) per chunk, in widget y-coords.
 
-        A zero-width side (an insert has no line on the left) collapses to a
-        single y, so the band tapers to a point there.
+        A zero-width side collapses to a single y, so the band tapers to a point.
         """
-        left, right = self._fd.panes
         shapes = []
-        for tag, l1, l2, r1, r2 in self._fd.opcodes():
+        for tag, l_lo, l_hi, r_lo, r_hi in self._chunks_fn():
             shapes.append((
                 tag,
-                left.y_for_line(l1), left.y_for_line(l2),
-                right.y_for_line(r1), right.y_for_line(r2),
+                self._left.y_for_line(l_lo), self._left.y_for_line(l_hi),
+                self._right.y_for_line(r_lo), self._right.y_for_line(r_hi),
             ))
         return shapes
 
@@ -48,7 +49,7 @@ class LinkMap(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w = self.width()
-        theme = self._fd.theme()
+        theme = self._theme_fn()
         for tag, l_top, l_bot, r_top, r_bot in self.chunk_shapes():
             base = QColor(getattr(theme, _KIND_BG.get(tag, "replace_bg")))
             fill = QColor(base)
