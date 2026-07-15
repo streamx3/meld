@@ -11,6 +11,8 @@ Kept separate from the 1.4-era meldq/filediff.py, which remains as reference.
 
 import difflib
 
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygon
 from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from meldq.engine.matchers import MyersSequenceMatcher
@@ -22,6 +24,25 @@ from meldq.widgets.sciview import (
     LIGHT,
     MeldSciView,
 )
+
+
+def _arrow_pixmap(direction, color="#707070", size=12):
+    """A small solid triangle pointing left/right, for the merge action margin
+    (QScintilla has RightArrow but no LeftArrow, so both are drawn here)."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(QColor(color))
+    painter.setPen(Qt.PenStyle.NoPen)
+    m = 3
+    if direction == "right":
+        pts = [QPoint(m, m), QPoint(size - m, size // 2), QPoint(m, size - m)]
+    else:
+        pts = [QPoint(size - m, m), QPoint(m, size // 2), QPoint(size - m, size - m)]
+    painter.drawPolygon(QPolygon(pts))
+    painter.end()
+    return pm
 
 
 def load_file(path, codecs=("utf-8",)):
@@ -63,9 +84,14 @@ class FileDiffView(QWidget):
         layout.addWidget(self.panes[0], 1)
         layout.addWidget(self.linkmap)
         layout.addWidget(self.panes[1], 1)
-        for view in self.panes:
+        # Merge action margin: left pane sends right (→), right pane sends left (←).
+        self.panes[0].set_action_symbol(_arrow_pixmap("right"))
+        self.panes[1].set_action_symbol(_arrow_pixmap("left"))
+        for pane, view in enumerate(self.panes):
             view.scrolled.connect(self._on_scrolled)
             view.textChanged.connect(self._on_text_changed)   # live re-diff
+            view.action_clicked.connect(
+                lambda line, p=pane: self._on_action(p, line))
 
     # ----- loading ----------------------------------------------------------
 
@@ -134,17 +160,22 @@ class FileDiffView(QWidget):
         for view in self.panes:
             view.clear_chunks()
             view.clear_inline()
+            view.clear_action_markers()
         left, right = self.panes
         left_lines, right_lines = self._pane_lines(0), self._pane_lines(1)
         for tag, l1, l2, r1, r2 in MyersSequenceMatcher(
                 None, left_lines, right_lines).get_difference_opcodes():
             if tag == "delete":
                 left.add_chunk(l1, l2, KIND_DELETE)
+                left.add_action_marker(l1)          # → send left's lines right
             elif tag == "insert":
                 right.add_chunk(r1, r2, KIND_INSERT)
+                right.add_action_marker(r1)         # ← send right's lines left
             elif tag == "replace":
                 left.add_chunk(l1, l2, KIND_REPLACE)
                 right.add_chunk(r1, r2, KIND_REPLACE)
+                left.add_action_marker(l1)
+                right.add_action_marker(r1)
                 self._inline_replace(left_lines, right_lines, l1, l2, r1, r2)
         self.linkmap.update()
 
@@ -220,6 +251,13 @@ class FileDiffView(QWidget):
         lo, hi = self._pane_range(chunk, pane)
         lines = self._pane_lines(pane)
         self.panes[pane].replace_all_text("\n".join(lines[:lo] + lines[hi:]))
+
+    def _on_action(self, pane, line):
+        # Merge arrow clicked in `pane`'s action margin: send that pane's side
+        # of the chunk to the other pane.
+        chunk = self.chunk_at_line(pane, line)
+        if chunk is not None:
+            self.copy_chunk(chunk, src_pane=pane, dst_pane=1 - pane)
 
     # ----- sync scroll ------------------------------------------------------
 

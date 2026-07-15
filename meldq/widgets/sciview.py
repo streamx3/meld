@@ -42,6 +42,7 @@ from PyQt6.Qsci import (
 KIND_DELETE, KIND_INSERT, KIND_REPLACE, KIND_CONFLICT = range(4)
 _CHUNK_KINDS = (KIND_DELETE, KIND_INSERT, KIND_REPLACE, KIND_CONFLICT)
 _INLINE_INDICATOR = 0
+MARKER_ACTION = 8               # merge arrow in the clickable action margin
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ _LEXERS = {
 class MeldSciView(QsciScintilla):
     focus_changed = pyqtSignal(bool)
     scrolled = pyqtSignal()             # vertical scroll changed (drives sync-scroll)
+    action_clicked = pyqtSignal(int)    # merge arrow clicked at this line
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -104,11 +106,15 @@ class MeldSciView(QsciScintilla):
         self.setIndentationsUseTabs(False)
         self.setTabWidth(4)
 
-        # Line-number margin (0); no symbol margin.
+        # Line-number margin (0) + a clickable action margin (1) for merge arrows.
         self.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
         self.setMarginLineNumbers(0, True)
         self.setMarginWidth(0, "00000")
-        self.setMarginWidth(1, 0)
+        self.setMarginType(1, QsciScintilla.MarginType.SymbolMargin)
+        self.setMarginWidth(1, 16)
+        self.setMarginSensitivity(1, True)
+        self.setMarginMarkerMask(1, 1 << MARKER_ACTION)   # only the arrow shows here
+        self.marginClicked.connect(self._on_margin_clicked)
 
         for kind in _CHUNK_KINDS:
             self.markerDefine(QsciScintilla.MarkerSymbol.Background, kind)
@@ -197,6 +203,26 @@ class MeldSciView(QsciScintilla):
         pos = self.positionFromLineIndex(line, col)
         return bool(self.SendScintilla(
             self.SCI_INDICATORVALUEAT, _INLINE_INDICATOR, pos))
+
+    # ----- action margin (merge arrows) -------------------------------------
+
+    def set_action_symbol(self, symbol):
+        """Define the arrow drawn in the action margin (a MarkerSymbol or a
+        QPixmap — left/right arrows are drawn as pixmaps by the caller)."""
+        self.markerDefine(symbol, MARKER_ACTION)
+
+    def clear_action_markers(self):
+        self.markerDeleteAll(MARKER_ACTION)
+
+    def add_action_marker(self, line):
+        self.markerAdd(line, MARKER_ACTION)
+
+    def has_action_marker(self, line):
+        return bool(self.markersAtLine(line) & (1 << MARKER_ACTION))
+
+    def _on_margin_clicked(self, margin, line, state):
+        if margin == 1:
+            self.action_clicked.emit(line)
 
     # ----- coordinates / scroll (for LinkMap + sync-scroll) -----------------
 

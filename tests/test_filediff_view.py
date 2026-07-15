@@ -229,3 +229,49 @@ def test_merge_then_save(fd, tmp_path):
     fd.copy_chunk(fd.chunk_at_line(0, 1), src_pane=0, dst_pane=1)
     fd.save(1)
     assert b.read_bytes() == b"k\nLEFT\nm\n"        # merged result persisted
+
+
+# ----- M2: ActionGutter (clickable merge arrows) ----------------------------
+
+def test_action_markers_on_chunk_first_lines(fd):
+    fd.set_texts(["a\nOLD\nb\n", "a\nNEW\nb\n"])
+    assert fd.panes[0].has_action_marker(1)         # replace -> both panes
+    assert fd.panes[1].has_action_marker(1)
+    assert not fd.panes[0].has_action_marker(0)     # unchanged line: no arrow
+
+
+def test_action_markers_delete_left_only(fd):
+    fd.set_texts(["a\nGONE\nb\n", "a\nb\n"])
+    assert fd.panes[0].has_action_marker(1)         # left has the deleted line
+    assert not fd.panes[1].has_action_marker(1)     # right side is zero-width
+
+
+def test_action_markers_insert_right_only(fd):
+    fd.set_texts(["a\nb\n", "a\nX\nb\n"])
+    assert fd.panes[1].has_action_marker(1)
+    assert not fd.panes[0].has_action_marker(1)
+
+
+def test_click_left_arrow_sends_right(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[0].action_clicked.emit(1)              # click left pane's arrow
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"     # right now matches left
+
+
+def test_click_right_arrow_sends_left(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[1].action_clicked.emit(1)
+    assert fd.panes[0].text() == "a\nRIGHT\nb\n"
+
+
+def test_click_insert_arrow_pulls_into_left(fd):
+    fd.set_texts(["a\nb\n", "a\nX\nY\nb\n"])
+    fd.panes[1].action_clicked.emit(1)              # right's inserted block
+    assert fd.panes[0].text() == "a\nX\nY\nb\n"
+
+
+def test_action_markers_cleared_after_merge(fd):
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[0].action_clicked.emit(1)
+    assert not fd.panes[0].has_action_marker(1)     # diff resolved -> no arrows
+    assert not fd.panes[1].has_action_marker(1)
