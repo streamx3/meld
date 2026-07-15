@@ -96,3 +96,55 @@ user color pickers · prefs migration from meldrc/GSettings · VC push/unstage.
 
 ## Non-goals
 Not feature-for-feature 3.24 parity. Not GTK look-alike. No DE/OS coupling (no KDE libs).
+
+---
+
+## Progress log
+
+**Branch `release-3_24_0_qt`, ~574 tests green, all pushed to fork
+`git@github.com:streamx3/meld.git`.** Fresh code lives in `meldq/views/` +
+`meldq/widgets/` + a few top-level `meldq/*.py` cores; the 1.4 `meldq/*.py`
+(filediff/dirdiff/vcview/vc/) and the 3.24 `meld/` tree are REFERENCE only.
+
+### Done
+- **M0/M0.5/M1** — QScintilla editor spike; `meldq/patch.py` (pure-Python
+  unified-diff parse+apply, no GNU patch; the headline differentiator's core);
+  `meldq/widgets/sciview.py` `MeldSciView`; engine aligned to 3.24
+  (`meldq/engine/matchers.py` postprocess+DiffChunk+guards, verified byte-
+  identical to `meld/matchers/myers.py` in `tests/engine/test_matcher_vs_324.py`).
+- **M2 (FileDiff) COMPLETE** — `meldq/views/filediff.py` `FileDiffView` (2- and
+  3-way). Editable + live re-diff; undoable copy/delete merge; encoding-aware
+  load/save; `meldq/views/linkmap.py` connectors; joined-region inline;
+  ActionGutter click-merge; next/prev nav; **3-way via `Differ` with conflict
+  detection**; on-disk reload via `meldq/widgets/infobar.py`. 2-way uses the raw
+  Myers matcher; 3-way uses the Differ (pane 1 = base).
+- **M3 (DirDiff) FUNCTIONAL** — `meldq/dircompare.py` (Qt-free `walk()` +
+  tri-state `files_same` + per-pane states); `meldq/views/dirdiff.py`
+  `DirDiffView` (tree, state colours, compare/copy/trash-delete, state filters,
+  expansion preserved across refresh, opens FileDiff on a file).
+- **M4 (VcView, git) FUNCTIONAL** — `meldq/gitvc.py` (Qt-free: find_repo_root,
+  status, repo_file_content=HEAD bytes); `meldq/views/vcview.py` `VcView`
+  (lists changes, opens working-vs-repository FileDiff).
+
+Standalone runners exist per view (`python -m meldq.views.{filediff|dirdiff|vcview}`);
+**there is no unifying app shell yet.**
+
+### Remaining (rough order)
+1. **M4 VC actions** — commit dialog, add/remove/revert/resolve, conflict 3-way.
+2. **M5 Patch dialog** — a small UI over `meldq/patch.py`; import = open
+   FileDiff(source, apply(source, patch)); export = the 3-pane side-select dialog.
+3. **M6 the shell** — a real MeldWindow: tabs hosting the three views,
+   New-Comparison dialog, CLI dispatch, prefs (GSettings-aligned keys), minimal
+   light/dark theming, then **packaging (macOS .app, Windows)**. This is what
+   makes it a shippable app.
+4. **M3 polish** — scheduler-driven incremental scan (currently synchronous full
+   walk + full-tree refresh, ok for normal trees), size/mtime columns, folder
+   picker + filter UI.
+
+### Known deferred refinements
+- FileDiff: incremental re-diff (`Differ.change_sequence`) for large files
+  (currently synchronous full re-diff per edit); inline offsets are char-based
+  (non-ASCII needs UTF-16/byte mapping); inline chaff-reduction / InlineMyers;
+  3-way merge is outer→base only (no base→side); theme-adaptive gutter arrows.
+- No i18n yet in the fresh views (plain strings; gettext wiring is M6).
+- Colours are hardcoded in `sciview.LIGHT/DARK`; no user pickers (per plan).
