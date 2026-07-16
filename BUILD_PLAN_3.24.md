@@ -175,11 +175,11 @@ the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.m
   3-way merge is outer→base only (no base→side); theme-adaptive gutter arrows.
 - No i18n yet in the fresh views (plain strings; gettext wiring is M6).
 - Colours are hardcoded in `sciview.LIGHT/DARK`; no user pickers (per plan).
-- Dark theme does not yet recolour the active *syntax-lexer token* colours in
-  the editor (still light-tuned); the editor paper/overlays and all chrome do
-  adapt. Full per-token theming waits on the style-scheme system (backlog).
 - `-a/--auto-compare` is a no-op: the fresh DirDiff/VcView scan eagerly on load,
   so folder comparison is already automatic; the flag has no extra effect.
+- No Preferences dialog yet (the original's `Cmd+,`). Theme selection lives in
+  View ▸ Theme; a settings dialog is deferred until there is more than the
+  light/dark pair to configure (more themes, font/tab-size UI, filter editing).
 
 ### Post-M6 polish (done)
 - **Editor font**: `MeldSciView` forces a uniform monospace font over every
@@ -201,3 +201,10 @@ the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.m
   **alternating-row (zebra) striping** and equal-width columns from the OS
   palette, `NORMAL` rows follow the palette text colour (fixing dark-mode
   black-on-grey), and per-mode semantic state colours. View ▸ Theme selector.
+- **Editor syntax theme**: `MeldSciView` now paints every syntax-token style from
+  a **GitHub Default Light/Dark** palette (token roles matched to each lexer's
+  per-style descriptions, so it is lexer-agnostic), re-asserted in full on every
+  theme change. This fixes dark-mode code being unreadable (QScintilla's built-in
+  navy/grey token colours on a dark paper) and makes an OS light↔dark flip
+  repaint the editor cleanly instead of half-updating. Colour values are from
+  github/github-vscode-theme (MIT; hex values aren't copyrightable).

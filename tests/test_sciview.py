@@ -125,3 +125,41 @@ def test_set_base_font_propagates_to_lexer(view):
     view.set_base_font(QFont("Courier New", 13))
     assert view._base_font.family() == "Courier New"       # recorded
     assert view._lexer.font(1).family() == "Courier New"   # comment style follows
+
+
+# ----- GitHub token palette (readable syntax colours in dark mode) ----------
+
+def test_dark_mode_paints_readable_token_colours(view):
+    from meldq.widgets.sciview import _TOKENS
+    view.set_language_for("main.py")
+    view.apply_theme(DARK)
+    lx = view._lexer
+    # Not QScintilla's built-in navy/grey (unreadable on dark) — GitHub colours.
+    assert lx.color(5).name() == _TOKENS["dark"]["keyword"]     # keyword
+    assert lx.color(1).name() == _TOKENS["dark"]["comment"]     # comment
+    assert lx.color(3).name() == _TOKENS["dark"]["string"]      # string
+    assert lx.color(0).name() == _TOKENS["dark"]["default"]     # default text
+    assert lx.paper(0).name() == DARK.paper                     # dark background
+
+
+def test_theme_flip_reasserts_all_token_styles(view):
+    from meldq.widgets.sciview import _TOKENS
+    view.set_language_for("main.py")
+    view.apply_theme(DARK)
+    view.apply_theme(LIGHT)
+    assert view._lexer.color(5).name() == _TOKENS["light"]["keyword"]
+    view.apply_theme(DARK)                       # flip back must fully re-apply
+    assert view._lexer.color(5).name() == _TOKENS["dark"]["keyword"]
+
+
+def test_role_classifier_maps_descriptions():
+    from meldq.widgets.sciview import _role_for
+    assert _role_for("Comment block") == "comment"
+    assert _role_for("Secondary keywords and identifiers") == "keyword"
+    assert _role_for("Double-quoted string") == "string"
+    assert _role_for("Escape sequence") == "string"
+    assert _role_for("Class name") == "type"
+    assert _role_for("Function or method name") == "function"
+    assert _role_for("Pre-processor block") == "preprocessor"
+    assert _role_for("Identifier") == "default"
+    assert _role_for("Operator") == "default"

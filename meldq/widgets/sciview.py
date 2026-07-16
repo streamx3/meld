@@ -47,6 +47,7 @@ MARKER_ACTION = 8               # merge arrow in the clickable action margin
 
 @dataclass(frozen=True)
 class Theme:
+    name: str                   # "light"/"dark" — selects the token palette
     paper: str
     text: str
     delete_bg: str
@@ -54,19 +55,73 @@ class Theme:
     replace_bg: str
     conflict_bg: str
     inline_bg: str
+    selection_bg: str
 
     def bg_for(self, kind):
         return (self.delete_bg, self.insert_bg,
                 self.replace_bg, self.conflict_bg)[kind]
 
 
-# v1: exactly one light + one dark palette (no user color pickers).
-LIGHT = Theme(paper="#ffffff", text="#000000",
-              delete_bg="#ffdddd", insert_bg="#ddffdd",
-              replace_bg="#ddeeff", conflict_bg="#ffe0b0", inline_bg="#8fb6e1")
-DARK = Theme(paper="#1e1e1e", text="#d4d4d4",
-             delete_bg="#4a2323", insert_bg="#234a23",
-             replace_bg="#233a5a", conflict_bg="#5a4423", inline_bg="#3a5a80")
+# Editor palettes, colours borrowed from GitHub's "Default Light/Dark" themes
+# (github/github-vscode-theme, MIT — and colour values are not copyrightable).
+LIGHT = Theme(name="light", paper="#ffffff", text="#1f2328",
+              delete_bg="#ffebe9", insert_bg="#e6ffec", replace_bg="#ddf4ff",
+              conflict_bg="#fff8c5", inline_bg="#8fb6e1", selection_bg="#cce5ff")
+DARK = Theme(name="dark", paper="#0d1117", text="#e6edf3",
+             delete_bg="#4b2225", insert_bg="#143d28", replace_bg="#16324f",
+             conflict_bg="#3d3115", inline_bg="#3a5a80", selection_bg="#2d4f76")
+
+# Syntax token foreground per theme (GitHub Default Light/Dark). Roles are
+# matched to each QScintilla lexer's per-style *description* (lexer-agnostic).
+_TOKENS = {
+    "light": {
+        "default": "#1f2328", "comment": "#6e7781", "keyword": "#cf222e",
+        "string": "#0a3069", "number": "#0550ae", "function": "#8250df",
+        "type": "#953800", "preprocessor": "#cf222e", "decorator": "#8250df",
+        "tag": "#116329", "attribute": "#0550ae", "heading": "#0550ae",
+        "error": "#cf222e",
+    },
+    "dark": {
+        "default": "#e6edf3", "comment": "#8b949e", "keyword": "#ff7b72",
+        "string": "#a5d6ff", "number": "#79c0ff", "function": "#d2a8ff",
+        "type": "#ffa657", "preprocessor": "#ff7b72", "decorator": "#d2a8ff",
+        "tag": "#7ee787", "attribute": "#79c0ff", "heading": "#1f6feb",
+        "error": "#ff7b72",
+    },
+}
+
+
+def _role_for(description):
+    """Map a QScintilla lexer style description to a token-palette role.
+    Ordered specific-first so e.g. 'Comment block' -> comment, 'Secondary
+    keywords and identifiers' -> keyword, 'Escape sequence' -> string."""
+    d = description.lower()
+    if "comment" in d:
+        return "comment"
+    if "string" in d or "here document" in d or "backtick" in d \
+            or "escape sequence" in d:
+        return "string"
+    if "keyword" in d:
+        return "keyword"
+    if "number" in d:
+        return "number"
+    if "decorator" in d:
+        return "decorator"
+    if "pre-processor" in d or "preprocessor" in d:
+        return "preprocessor"
+    if "class" in d or "typedef" in d or "type" in d:
+        return "type"
+    if "function" in d or "method" in d:
+        return "function"
+    if "tag" in d:
+        return "tag"
+    if "attribute" in d or "property" in d:
+        return "attribute"
+    if "header" in d:
+        return "heading"
+    if "unclosed" in d or d == "error":
+        return "error"
+    return "default"           # default text, identifiers, operators
 
 # File extension -> lexer factory. Unknown -> no highlighting.
 _LEXERS = {
@@ -148,17 +203,42 @@ class MeldSciView(QsciScintilla):
     def apply_theme(self, theme):
         self._theme = theme
         paper, text = QColor(theme.paper), QColor(theme.text)
-        self.setColor(text)
+        self.setColor(text)                     # governs plain (un-lexed) text
         self.setPaper(paper)
         self.setMarginsBackgroundColor(paper)
         self.setMarginsForegroundColor(text)
+        self.setSelectionBackgroundColor(QColor(theme.selection_bg))
+        self.setCaretForegroundColor(text)
         for kind in _CHUNK_KINDS:
             self.setMarkerBackgroundColor(QColor(theme.bg_for(kind)), kind)
         self.setIndicatorForegroundColor(
             QColor(theme.inline_bg), _INLINE_INDICATOR)
-        if self._lexer is not None:
-            self._lexer.setDefaultPaper(paper)
-            self._lexer.setPaper(paper, -1)
+        # Re-assert the lexer's per-style colours so syntax highlighting tracks
+        # the theme (and flips fully on an OS light<->dark change).
+        self._apply_lexer_theme(theme)
+
+    def _apply_lexer_theme(self, theme):
+        """Paint every syntax-token style from the GitHub palette for `theme`.
+        Without this, QScintilla lexers keep their built-in light-mode token
+        colours (navy keywords, grey default), which are unreadable on a dark
+        paper — the classic "black on dark grey" in dark mode."""
+        if self._lexer is None:
+            return
+        paper = QColor(theme.paper)
+        tokens = _TOKENS[theme.name]
+        default_fg = QColor(tokens["default"])
+        self._lexer.setDefaultPaper(paper)
+        self._lexer.setDefaultColor(default_fg)
+        self._lexer.setPaper(paper, -1)          # uniform background, all styles
+        self._lexer.setColor(default_fg, -1)     # baseline foreground
+        self._lexer.setFont(self._base_font, -1)
+        for style in range(128):
+            description = self._lexer.description(style)
+            if not description:
+                continue
+            self._lexer.setColor(QColor(tokens[_role_for(description)]), style)
+            self._lexer.setPaper(paper, style)
+        self.recolor()                           # repaint with the new styles
 
     # ----- content / language ----------------------------------------------
 
@@ -187,12 +267,12 @@ class MeldSciView(QsciScintilla):
             self.apply_theme(self._theme)      # re-assert plain colours
             return
         lexer = factory(self)
-        lexer.setDefaultPaper(QColor(self._theme.paper))
-        lexer.setPaper(QColor(self._theme.paper), -1)
         lexer.setDefaultFont(self._base_font)
-        lexer.setFont(self._base_font, -1)     # kill the per-style Comic Sans/Courier
         self._lexer = lexer                    # keep a Python ref alive
         self.setLexer(lexer)
+        # Paint the whole style table from the current theme (background, the
+        # GitHub token foregrounds, and the monospace font over Comic Sans).
+        self._apply_lexer_theme(self._theme)
 
     # ----- chunk backgrounds ------------------------------------------------
 
