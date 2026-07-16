@@ -173,16 +173,22 @@ def test_dirdiff_row_activation_opens_filediff_tab(window, tmp_path):
 
 # ----- theming --------------------------------------------------------------
 
-def test_dark_toggle_applies_and_persists(window, two_files):
+def test_theme_menu_has_system_light_dark(window):
+    assert list(window._theme_actions) == ["system", "light", "dark"]
+    assert window.prefs.theme == "system"          # default follows the OS
+
+
+def test_dark_mode_applies_and_persists(window, two_files):
     view = window.append_filediff(list(two_files))
     assert view.panes[0]._theme is LIGHT
-    window.on_toggle_dark(True)
+    window._set_theme_pref("dark")
     assert window.prefs.theme == "dark"
     assert view.panes[0]._theme is DARK
+    assert window._theme_actions["dark"].isChecked()
 
 
 def test_new_tab_inherits_current_theme(window, two_files):
-    window.on_toggle_dark(True)
+    window._set_theme_pref("dark")
     view = window.append_filediff(list(two_files))
     assert view.panes[0]._theme is DARK
 
@@ -192,7 +198,43 @@ def test_theme_action_reflects_pref_at_startup(qapp, qtbot, tmp_path):
     settings.setValue("prefs/theme", "dark")
     win = MeldWindow(Preferences(settings))
     qtbot.addWidget(win)
-    assert win.action_dark_theme.isChecked()
+    assert win._theme_actions["dark"].isChecked()
+
+
+def test_dark_mode_reaches_tree_views(window, tmp_path):
+    from meldq.views.dirdiff import ROLE_STATE, _FG
+    from meldq.dircompare import STATE_MODIFIED
+    d1, d2 = tmp_path / "l", tmp_path / "r"
+    d1.mkdir(); d2.mkdir()
+    (d1 / "x.txt").write_text("a\n"); (d2 / "x.txt").write_text("b\n")
+    dv = window.append_dirdiff([str(d1), str(d2)])
+    window._set_theme_pref("dark")
+    assert dv._mode == "dark"
+    # a modified row now carries the dark-tuned blue, not the light one.
+    idx = dv.model.index(0, 0)
+    assert dv.model.itemFromIndex(idx).data(ROLE_STATE) == STATE_MODIFIED
+    assert dv.model.itemFromIndex(idx).foreground().color().name() == _FG["dark"][STATE_MODIFIED]
+
+
+def test_dirdiff_tree_has_zebra_and_equal_columns(window, tmp_path):
+    from PyQt6.QtWidgets import QHeaderView
+    d1, d2 = tmp_path / "l", tmp_path / "r"
+    d1.mkdir(); d2.mkdir()
+    dv = window.append_dirdiff([str(d1), str(d2)])
+    assert dv.tree.alternatingRowColors()
+    assert dv.tree.header().sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert dv.tree.header().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+
+def test_vcview_status_column_hugs_label(window, tmp_path):
+    # Regression: stretchLastSection (Qt default True) would force Status to
+    # fill half the width; it must be off so Name stretches, Status hugs.
+    from PyQt6.QtWidgets import QHeaderView
+    vv = window.open_paths([str(tmp_path)])
+    header = vv.tree.header()
+    assert header.stretchLastSection() is False
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
 
 
 # ----- save -----------------------------------------------------------------

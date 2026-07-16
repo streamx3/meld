@@ -175,9 +175,9 @@ the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.m
   3-way merge is outer→base only (no base→side); theme-adaptive gutter arrows.
 - No i18n yet in the fresh views (plain strings; gettext wiring is M6).
 - Colours are hardcoded in `sciview.LIGHT/DARK`; no user pickers (per plan).
-- Dark theme (M6) recolours the diff overlays + editor paper but NOT the active
-  syntax-lexer token colours (still light-tuned) nor the DirDiff/VcView tree
-  state colours — both wait on the full style-scheme system (backlog).
+- Dark theme does not yet recolour the active *syntax-lexer token* colours in
+  the editor (still light-tuned); the editor paper/overlays and all chrome do
+  adapt. Full per-token theming waits on the style-scheme system (backlog).
 - `-a/--auto-compare` is a no-op: the fresh DirDiff/VcView scan eagerly on load,
   so folder comparison is already automatic; the flag has no extra effect.
 
@@ -193,3 +193,11 @@ the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.m
   latin-1 fallback) and threads the source encoding/EOL into the FileDiff via
   `set_encoding`, so accepting + saving a non-UTF-8 source writes it back
   losslessly instead of clobbering it as UTF-8.
+- **Theming: System / Light / Dark** (default *Follow System*). The shell drives
+  the whole app chrome natively via `QStyleHints.setColorScheme` (Qt 6.8+) and
+  follows live OS light↔dark flips (`colorSchemeChanged`); it resolves the
+  effective mode via `colorScheme()` and applies the editor `LIGHT`/`DARK` theme
+  (QScintilla) plus a mode to the trees. DirDiff/VcView are now theme-aware:
+  **alternating-row (zebra) striping** and equal-width columns from the OS
+  palette, `NORMAL` rows follow the palette text colour (fixing dark-mode
+  black-on-grey), and per-mode semantic state colours. View ▸ Theme selector.

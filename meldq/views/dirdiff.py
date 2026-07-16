@@ -21,7 +21,13 @@ from PyQt6.QtGui import (
     QStandardItem,
     QStandardItemModel,
 )
-from PyQt6.QtWidgets import QMenu, QTreeView, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHeaderView,
+    QMenu,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from meldq.dircompare import (
     STATE_ERROR,
@@ -38,14 +44,31 @@ ROLE_REL = Qt.ItemDataRole.UserRole + 1
 ROLE_STATE = Qt.ItemDataRole.UserRole + 2
 ROLE_ISDIR = Qt.ItemDataRole.UserRole + 3
 
-# state -> (foreground, bold, italic, strikethrough)
-_STYLE = {
-    STATE_NORMAL:   ("#000000", False, False, False),
-    STATE_NOCHANGE: ("#000000", False, True, False),
-    STATE_MODIFIED: ("#1c5fbf", True, False, False),
-    STATE_NEW:      ("#1a8a1a", True, False, False),
-    STATE_MISSING:  ("#999999", False, False, True),
-    STATE_ERROR:    ("#cc0000", True, False, False),
+# Font decoration per state (bold, italic, strikethrough) — mode-independent.
+_DECOR = {
+    STATE_NORMAL:   (False, False, False),
+    STATE_NOCHANGE: (False, True, False),
+    STATE_MODIFIED: (True, False, False),
+    STATE_NEW:      (True, False, False),
+    STATE_MISSING:  (False, False, True),
+    STATE_ERROR:    (True, False, False),
+}
+
+# Semantic foreground per theme. None => use the view's palette text colour, so
+# NORMAL/NOCHANGE rows follow light/dark automatically (fixing dark-mode
+# black-on-grey). The changed/new/error colours are tuned to read on each
+# background; the chrome (base/alt-row/text) comes from the OS palette.
+_FG = {
+    "light": {
+        STATE_NORMAL: None, STATE_NOCHANGE: None,
+        STATE_MODIFIED: "#1c5fbf", STATE_NEW: "#1a8a1a",
+        STATE_MISSING: "#8a8a8a", STATE_ERROR: "#cc0000",
+    },
+    "dark": {
+        STATE_NORMAL: None, STATE_NOCHANGE: None,
+        STATE_MODIFIED: "#6ab0ff", STATE_NEW: "#5fd35f",
+        STATE_MISSING: "#8a8a8a", STATE_ERROR: "#ff6b6b",
+    },
 }
 
 
@@ -69,6 +92,7 @@ class DirDiffView(QWidget):
         assert num_panes in (2, 3)
         self.num_panes = num_panes
         self._roots = None
+        self._mode = "light"
         self.name_filters = []
         self.regexes = []
         self.state_filters = {STATE_NORMAL, STATE_NEW, STATE_MODIFIED}
@@ -79,6 +103,9 @@ class DirDiffView(QWidget):
         self.tree.setModel(self.model)
         self.tree.setUniformRowHeights(True)
         self.tree.setAllColumnsShowFocus(True)
+        self.tree.setAlternatingRowColors(True)    # zebra striping (OS palette)
+        self.tree.header().setSectionResizeMode(    # one equal-width column/pane
+            QHeaderView.ResizeMode.Stretch)
         self.tree.setExpandsOnDoubleClick(False)   # activation opens a diff
         self.tree.activated.connect(self.on_activated)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -189,13 +216,41 @@ class DirDiffView(QWidget):
         return items
 
     def _style(self, item, state):
-        fg, bold, italic, strike = _STYLE.get(state, _STYLE[STATE_NORMAL])
-        item.setForeground(QBrush(QColor(fg)))
+        bold, italic, strike = _DECOR.get(state, _DECOR[STATE_NORMAL])
+        fg = _FG[self._mode].get(state)
+        if fg is not None:
+            item.setForeground(QBrush(QColor(fg)))
+        else:
+            # Clear any override so the row uses the palette text colour, which
+            # follows light/dark with the OS.
+            item.setData(None, Qt.ItemDataRole.ForegroundRole)
         font = QFont()
         font.setBold(bold)
         font.setItalic(italic)
         font.setStrikeOut(strike)
         item.setFont(font)
+
+    # ----- theming ----------------------------------------------------------
+
+    def set_theme(self, mode):
+        """Switch the semantic state colours to the light or dark palette and
+        restyle the existing rows. The chrome (background, alternate-row shade,
+        default text) comes from the OS palette, so it needs no work here."""
+        self._mode = "dark" if mode == "dark" else "light"
+        self._restyle()
+
+    def _restyle(self):
+        def visit(parent):
+            for r in range(self.model.rowCount(parent)):
+                for c in range(self.num_panes):
+                    item = self.model.itemFromIndex(self.model.index(r, c, parent))
+                    if item is not None:
+                        state = item.data(ROLE_STATE)
+                        if state is not None:
+                            self._style(item, state)
+                visit(self.model.index(r, 0, parent))
+
+        visit(QModelIndex())
 
     @staticmethod
     def _icon(isdir):

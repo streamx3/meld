@@ -15,6 +15,7 @@ import os
 from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QAction,
+    QActionGroup,
     QDesktopServices,
     QFontDatabase,
     QIcon,
@@ -79,7 +80,12 @@ class MeldWindow(QMainWindow):
         self._geometry_timer.timeout.connect(self._save_geometry)
 
         self.setAcceptDrops(True)
-        self._apply_theme(self.prefs.theme)
+        # colorSchemeChanged is Qt 6.8+ (the declared floor); guard so a
+        # mismatched install degrades to no live OS-follow rather than crashing.
+        hints = QApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_os_color_scheme_changed)
+        self._apply_theme()
         self._update_action_state()
 
     # ----- construction -----------------------------------------------------
@@ -153,9 +159,6 @@ class MeldWindow(QMainWindow):
             "_Refresh", "Ctrl+R", "view-refresh",
             "Rescan the current comparison", self.on_refresh)
 
-        self.action_dark_theme = self._act(
-            "_Dark Theme", None, None,
-            "Use the dark colour palette", self.on_toggle_dark, checkable=True)
         self.action_toolbar_visible = self._act(
             "_Toolbar", None, None, "Show or hide the toolbar",
             lambda checked: setattr(self.prefs, "toolbar_visible", checked),
@@ -209,7 +212,7 @@ class MeldWindow(QMainWindow):
         changes_menu.addAction(self.action_next_change)
 
         view_menu = make_menu("view", "_View")
-        view_menu.addAction(self.action_dark_theme)
+        self._build_theme_menu(view_menu)
         view_menu.addSeparator()
         view_menu.addAction(self.action_toolbar_visible)
         view_menu.addAction(self.action_statusbar_visible)
@@ -240,20 +243,69 @@ class MeldWindow(QMainWindow):
 
     # ----- theming ----------------------------------------------------------
 
-    def _theme_obj(self):
-        return DARK if self.prefs.theme == "dark" else LIGHT
+    # Theme pref value -> menu label (order preserved).
+    _THEME_CHOICES = (("system", "Follow System"), ("light", "Light"),
+                      ("dark", "Dark"))
 
-    def on_toggle_dark(self, checked):
+    def _build_theme_menu(self, parent_menu):
+        theme_menu = parent_menu.addMenu(mnemonic(_("_Theme")))
+        self._theme_group = QActionGroup(self)
+        self._theme_actions = {}
+        for value, label in self._THEME_CHOICES:
+            action = QAction(_(label), self, checkable=True)
+            action.setData(value)
+            action.triggered.connect(
+                lambda _checked, v=value: self._set_theme_pref(v))
+            self._theme_group.addAction(action)
+            theme_menu.addAction(action)
+            self._theme_actions[value] = action
+
+    def _set_theme_pref(self, value):
         # Writes the pref, which fires changed('theme') -> _apply_theme.
-        self.prefs.theme = "dark" if checked else "light"
+        self.prefs.theme = value
 
-    def _apply_theme(self, name):
-        self.action_dark_theme.setChecked(name == "dark")
-        theme = DARK if name == "dark" else LIGHT
+    def _resolve_mode(self):
+        """The effective light/dark mode. 'system' follows the OS appearance
+        (Qt.ColorScheme.Dark -> dark), else the explicit pref."""
+        pref = self.prefs.theme
+        if pref in ("light", "dark"):
+            return pref
+        hints = QApplication.styleHints()
+        scheme = hints.colorScheme() if hasattr(hints, "colorScheme") else None
+        return "dark" if scheme == Qt.ColorScheme.Dark else "light"
+
+    def _theme_obj(self):
+        return DARK if self._resolve_mode() == "dark" else LIGHT
+
+    def _apply_theme(self):
+        pref = self.prefs.theme
+        # Drive the whole app chrome natively (Qt 6.8+): force a scheme, or
+        # Unknown to follow the OS. No-op under the offscreen test platform;
+        # guarded so a pre-6.8 install still themes the editors/trees.
+        hints = QApplication.styleHints()
+        if hasattr(hints, "setColorScheme"):
+            scheme = {"light": Qt.ColorScheme.Light,
+                      "dark": Qt.ColorScheme.Dark}.get(
+                          pref, Qt.ColorScheme.Unknown)
+            hints.setColorScheme(scheme)
+
+        mode = self._resolve_mode()
+        editor_theme = DARK if mode == "dark" else LIGHT
         for i in range(self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, FileDiffView):
-                widget.set_theme(theme)
+                widget.set_theme(editor_theme)
+            elif isinstance(widget, (DirDiffView, VcView)):
+                widget.set_theme(mode)
+
+        action = self._theme_actions.get(pref)
+        if action is not None:
+            action.setChecked(True)
+
+    def _on_os_color_scheme_changed(self, _scheme):
+        # The OS flipped light<->dark; re-resolve only if we're following it.
+        if self.prefs.theme == "system":
+            self._apply_theme()
 
     def _apply_font_to(self, view):
         """Apply the current editor font pref (custom, or the system fixed font)
@@ -321,6 +373,7 @@ class MeldWindow(QMainWindow):
             return None
         view = DirDiffView(len(dirs))
         view.create_diff.connect(self._on_child_create_diff)
+        view.set_theme(self._resolve_mode())
         view.set_roots(dirs)
         self._add_tab(view, self._diff_title(dirs, labels), "folder")
         return view
@@ -328,6 +381,7 @@ class MeldWindow(QMainWindow):
     def append_vcview(self, location, labels=None):
         view = VcView()
         view.create_diff.connect(self._on_child_create_diff)
+        view.set_theme(self._resolve_mode())
         view.set_location(location)
         title = (labels[0] if labels else None) or \
             os.path.basename(os.path.abspath(location).rstrip(os.sep)) or location
@@ -582,7 +636,7 @@ class MeldWindow(QMainWindow):
 
     def _on_pref_changed(self, key):
         if key == "theme":
-            self._apply_theme(self.prefs.theme)
+            self._apply_theme()
         elif key in ("custom_font", "use_custom_font"):
             self._reapply_font()
         elif key == "toolbar_visible":

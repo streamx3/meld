@@ -21,6 +21,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QHeaderView,
     QLabel,
     QMenu,
     QPlainTextEdit,
@@ -43,13 +44,27 @@ _STATE_NAME = {
     gitvc.STATE_IGNORED: "ignored",
 }
 
-# state -> (foreground, bold, strikethrough)
-_STYLE = {
-    gitvc.STATE_MODIFIED: ("#1c5fbf", True, False),
-    gitvc.STATE_NEW:      ("#1a8a1a", True, False),
-    gitvc.STATE_REMOVED:  ("#cc0000", False, True),
-    gitvc.STATE_CONFLICT: ("#d17b00", True, False),
-    gitvc.STATE_IGNORED:  ("#999999", False, False),
+# state -> (bold, strikethrough) — mode-independent decoration.
+_DECOR = {
+    gitvc.STATE_MODIFIED: (True, False),
+    gitvc.STATE_NEW:      (True, False),
+    gitvc.STATE_REMOVED:  (False, True),
+    gitvc.STATE_CONFLICT: (True, False),
+    gitvc.STATE_IGNORED:  (False, False),
+}
+
+# Semantic foreground per theme; the chrome comes from the OS palette.
+_FG = {
+    "light": {
+        gitvc.STATE_MODIFIED: "#1c5fbf", gitvc.STATE_NEW: "#1a8a1a",
+        gitvc.STATE_REMOVED: "#cc0000", gitvc.STATE_CONFLICT: "#d17b00",
+        gitvc.STATE_IGNORED: "#8a8a8a",
+    },
+    "dark": {
+        gitvc.STATE_MODIFIED: "#6ab0ff", gitvc.STATE_NEW: "#5fd35f",
+        gitvc.STATE_REMOVED: "#ff6b6b", gitvc.STATE_CONFLICT: "#f0a54a",
+        gitvc.STATE_IGNORED: "#8a8a8a",
+    },
 }
 
 
@@ -60,6 +75,7 @@ class VcView(QWidget):
         super().__init__(parent)
         self.location = None
         self.repo_root = None
+        self._mode = "light"
         # A TemporaryDirectory (not a bare mkdtemp) so the materialised HEAD
         # versions are cleaned up when the view is GC'd or the process exits,
         # instead of leaking one temp tree per opened VC tab.
@@ -71,6 +87,14 @@ class VcView(QWidget):
         self.tree.setModel(self.model)
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
+        self.tree.setAlternatingRowColors(True)    # zebra striping (OS palette)
+        header = self.tree.header()
+        # stretchLastSection (True by default) would force the last column to
+        # fill the width, overriding ResizeToContents — turn it off so Name
+        # stretches and Status hugs its short label.
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.activated.connect(self.on_activated)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
@@ -105,7 +129,12 @@ class VcView(QWidget):
         name.setData(relpath, ROLE_REL)
         name.setData(state, ROLE_STATE)
         status = QStandardItem(_STATE_NAME.get(state, "?"))
-        fg, bold, strike = _STYLE.get(state, ("#000000", False, False))
+        self._style_row(name, status, state)
+        return [name, status]
+
+    def _style_row(self, name, status, state):
+        fg = _FG[self._mode].get(state, "#8a8a8a")
+        bold, strike = _DECOR.get(state, (False, False))
         for item in (name, status):
             item.setEditable(False)
             item.setForeground(QBrush(QColor(fg)))
@@ -113,7 +142,18 @@ class VcView(QWidget):
             font.setBold(bold)
             font.setStrikeOut(strike)
             item.setFont(font)
-        return [name, status]
+
+    # ----- theming ----------------------------------------------------------
+
+    def set_theme(self, mode):
+        """Switch the semantic state colours to the light/dark palette and
+        restyle existing rows; the chrome comes from the OS palette."""
+        self._mode = "dark" if mode == "dark" else "light"
+        for row in range(self.model.rowCount()):
+            name = self.model.item(row, 0)
+            status = self.model.item(row, 1)
+            if name is not None and status is not None:
+                self._style_row(name, status, name.data(ROLE_STATE))
 
     # ----- queries ----------------------------------------------------------
 

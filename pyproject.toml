@@ -10,7 +10,9 @@ license = "GPL-2.0-or-later"
 requires-python = ">=3.11"
 # QScintilla is a hard runtime dependency: meldq.widgets.sciview imports
 # PyQt6.Qsci at module load, and every view builds on MeldSciView.
-dependencies = ["PyQt6>=6.6", "PyQt6-QScintilla>=2.14"]
+# PyQt6 >= 6.8: the shell drives light/dark via QStyleHints.setColorScheme and
+# follows OS changes via the colorSchemeChanged signal, both added in Qt 6.8.
+dependencies = ["PyQt6>=6.8", "PyQt6-QScintilla>=2.14"]
 
 [project.optional-dependencies]
 highlight = ["pygments"]
