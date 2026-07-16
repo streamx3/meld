@@ -125,24 +125,48 @@ Not feature-for-feature 3.24 parity. Not GTK look-alike. No DE/OS coupling (no K
 - **M4 (VcView, git) FUNCTIONAL** — `meldq/gitvc.py` (Qt-free: find_repo_root,
   status, repo_file_content=HEAD bytes); `meldq/views/vcview.py` `VcView`
   (lists changes, opens working-vs-repository FileDiff).
+- **M6 (the shell) DONE** — `meldq/shell.py` `MeldWindow`: a tabbed
+  `QMainWindow` hosting the three fresh plain-QWidget views. Menus (File/Edit/
+  Changes/View/Help), toolbar, statusbar; comparison factories
+  (`append_filediff`/`append_dirdiff`/`append_vcview`/`append_diff`/
+  `open_paths`) with `create_diff` wiring so activating a dir/VC row opens a
+  FileDiff tab; CLI dispatch repointed (`meldq/main.py` → `meldq.shell`, labels
+  threaded); minimal light/dark theming (`theme` pref → `sciview.LIGHT/DARK`,
+  applied to FileDiff editors, persisted, inherited by new tabs); Save/Save-As,
+  prev/next-change, refresh, undo/redo/cut/copy/paste/find routed to the focused
+  QScintilla editor; **patch export** (`PatchDialog`, reverse + 3-way pane
+  selector, copy/save) and **patch import** (`import_patch` → one FileDiff tab
+  per file; the M5 UI wiring, differentiator complete); New-Comparison dialog;
+  About; DnD; geometry persistence; unsaved-changes close prompts. Note: the
+  1.4-era `meldq/app.py` (MeldDoc/scheduler/UIManager machinery) does NOT fit
+  the plain-QWidget views and is kept as **reference only** — the shell is
+  fresh. Hardening: declared the previously-undeclared `PyQt6-QScintilla`
+  runtime dep in `pyproject.toml`. **Packaging scaffolding** in `packaging/`
+  (PyInstaller `meldq.spec` + `meldq_launch.py` + `README.md` for macOS `.app` /
+  Windows `.exe`) — reviewed but not yet built in CI (PyInstaller can't
+  cross-compile; build on each target OS).
 
-Standalone runners exist per view (`python -m meldq.views.{filediff|dirdiff|vcview}`);
-**there is no unifying app shell yet.**
+Standalone runners still exist per view (`python -m meldq.views.{filediff|dirdiff|vcview}`);
+the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.main:main`).
 
 ### Remaining (rough order)
 1. **M4 VC** — DONE for git: browse, compare-vs-repo, add/revert/remove, commit
    (CommitDialog). Deferred: conflict 3-way merge (resolve), push/pull.
-2. **M5 Patch** — DONE (core): `meldq/patchimport.py` (import = open
-   FileDiff(source, apply(source, patch)) — the differentiator) + FileDiffView
-   .make_patch (export, round-trips). Remaining: a thin export dialog
-   (show/save/copy the patch text) + a file-picker entry to import.
-3. **M6 the shell** — a real MeldWindow: tabs hosting the three views,
-   New-Comparison dialog, CLI dispatch, prefs (GSettings-aligned keys), minimal
-   light/dark theming, then **packaging (macOS .app, Windows)**. This is what
-   makes it a shippable app.
+2. **M5 Patch** — DONE: core (`meldq/patchimport.py`, `FileDiffView.make_patch`)
+   plus the M6 UI wiring — `shell.PatchDialog` (export: reverse + 3-way pane
+   selector + copy/save) and `MeldWindow.import_patch` (file-picker →
+   FileDiff-per-file). Differentiator complete end-to-end.
+3. **M6 the shell** — DONE: `meldq/shell.py` `MeldWindow` (tabs, menus/toolbar/
+   statusbar, factories + `create_diff` wiring, CLI dispatch, New-Comparison
+   dialog, minimal light/dark theming, save/nav/edit routing, About, DnD,
+   geometry, close prompts). Packaging scaffolding in `packaging/` (PyInstaller).
+   Remaining within M6's "then packaging + hardening": run an actual signed
+   `.app`/`.exe` build on each target OS; wire gettext catalogs into the fresh
+   views (still plain strings — msgids are `_()`-wrapped but no `.mo` loaded).
 4. **M3 polish** — scheduler-driven incremental scan (currently synchronous full
    walk + full-tree refresh, ok for normal trees), size/mtime columns, folder
-   picker + filter UI.
+   picker + filter UI. Dark theme does not yet reach DirDiff/VcView tree colours
+   (hardcoded light; deferred with the full style-scheme system).
 
 ### Known deferred refinements
 - FileDiff: incremental re-diff (`Differ.change_sequence`) for large files
@@ -151,3 +175,11 @@ Standalone runners exist per view (`python -m meldq.views.{filediff|dirdiff|vcvi
   3-way merge is outer→base only (no base→side); theme-adaptive gutter arrows.
 - No i18n yet in the fresh views (plain strings; gettext wiring is M6).
 - Colours are hardcoded in `sciview.LIGHT/DARK`; no user pickers (per plan).
+- Dark theme (M6) recolours the diff overlays + editor paper but NOT the active
+  syntax-lexer token colours (still light-tuned) nor the DirDiff/VcView tree
+  state colours — both wait on the full style-scheme system (backlog).
+- Patch export (`make_patch`) omits the `\ No newline at end of file` marker, so
+  a patch of a file without a trailing newline round-trips through meldq's own
+  importer but may not apply cleanly with GNU `patch`/`git apply` (M5 refinement).
+- `-a/--auto-compare` is a no-op: the fresh DirDiff/VcView scan eagerly on load,
+  so folder comparison is already automatic; the flag has no extra effect.

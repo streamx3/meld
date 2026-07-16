@@ -72,7 +72,11 @@ def main(argv=None):
     except ImportError as exc:
         _missing_reqs("PyQt6 >= 6.6", exc)
 
-    from meldq.app import MeldWindow
+    try:
+        from meldq.shell import MeldWindow
+    except ImportError as exc:
+        # sciview imports PyQt6.Qsci at load time; surface the real cause.
+        _missing_reqs("PyQt6-QScintilla", exc)
     from meldq.util.prefs import Preferences
 
     app = QApplication(sys.argv)
@@ -86,11 +90,12 @@ def main(argv=None):
     window = MeldWindow(prefs)
     window.show()
 
+    # --diff groups accept 1-4 paths each; route through open_paths so a
+    # single-path group opens a VC view (like a bare positional path). Labels
+    # apply only to the primary positional comparison (3.24 behaviour).
     for files in args.diff:
-        window.append_diff(files)
-    tab = window.open_paths(args.paths, args.auto_compare)
-    if tab:
-        tab.set_labels(args.label)
+        window.open_paths(files, args.auto_compare)
+    window.open_paths(args.paths, args.auto_compare, args.label or None)
 
     if profile:
         import cProfile

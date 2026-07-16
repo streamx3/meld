@@ -60,7 +60,10 @@ class VcView(QWidget):
         super().__init__(parent)
         self.location = None
         self.repo_root = None
-        self._tempdir = None
+        # A TemporaryDirectory (not a bare mkdtemp) so the materialised HEAD
+        # versions are cleaned up when the view is GC'd or the process exits,
+        # instead of leaking one temp tree per opened VC tab.
+        self._tempdir_obj = None
 
         self.model = QStandardItemModel()
         self.model.setHorizontalHeaderLabels(["Name", "Status"])
@@ -194,9 +197,9 @@ class VcView(QWidget):
     def _materialize(self, relpath, data):
         """Write `data` (the repo version, or empty) to a temp file mirroring
         the repo layout, and return its path."""
-        if self._tempdir is None:
-            self._tempdir = tempfile.mkdtemp(prefix="meldq-vc-")
-        dest = os.path.join(self._tempdir, relpath)
+        if self._tempdir_obj is None:
+            self._tempdir_obj = tempfile.TemporaryDirectory(prefix="meldq-vc-")
+        dest = os.path.join(self._tempdir_obj.name, relpath)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
             f.write(data or b"")

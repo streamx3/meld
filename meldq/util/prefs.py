@@ -136,6 +136,9 @@ DEFAULTS = {
     "ignore_blank_lines": Value(BOOL, False),
     "toolbar_visible": Value(BOOL, True),
     "statusbar_visible": Value(BOOL, True),
+    # M6: minimal v1 theming — one built-in light + one dark palette. No user
+    # colour pickers (per BUILD_PLAN_3.24). "light" or "dark".
+    "theme": Value(STRING, "light"),
 }
 
 

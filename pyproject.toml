@@ -8,11 +8,14 @@ dynamic = ["version"]
 description = "Visual diff and merge tool (PyQt6 port of Meld)"
 license = "GPL-2.0-or-later"
 requires-python = ">=3.11"
-dependencies = ["PyQt6>=6.6"]
+# QScintilla is a hard runtime dependency: meldq.widgets.sciview imports
+# PyQt6.Qsci at module load, and every view builds on MeldSciView.
+dependencies = ["PyQt6>=6.6", "PyQt6-QScintilla>=2.14"]
 
 [project.optional-dependencies]
 highlight = ["pygments"]
 dev = ["pytest", "pytest-qt", "pytest-timeout"]
+package = ["pyinstaller>=6.0"]
 
 [project.scripts]
 meldq = "meldq.main:main"

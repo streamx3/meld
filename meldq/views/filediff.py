@@ -147,7 +147,12 @@ class FileDiffView(QWidget):
     def set_files(self, paths):
         texts = []
         for i, path in enumerate(paths):
-            text, encoding, eol = load_file(path)
+            if path and os.path.isfile(path):
+                text, encoding, eol = load_file(path)
+            else:
+                # A missing path opens as an empty, creatable pane (Meld lets
+                # you diff against / write a not-yet-existing file); never crash.
+                text, encoding, eol = "", "utf-8", "\n"
             self._encoding[i] = encoding
             self._eol[i] = eol
             self._disk_token[i] = _file_token(path)
@@ -219,6 +224,17 @@ class FileDiffView(QWidget):
 
     def is_modified(self, pane):
         return self.panes[pane].isModified()
+
+    def any_modified(self):
+        return any(self.is_modified(p) for p in range(self.num_panes))
+
+    def path(self, pane):
+        """The on-disk path backing `pane`, or None (never loaded from a file)."""
+        return self._paths[pane]
+
+    def focused_pane(self):
+        """The pane index that currently has keyboard focus (0 if none)."""
+        return self._focused_pane()
 
     def save(self, pane, path=None):
         """Write `pane` back with its original encoding + EOL. The buffer is
