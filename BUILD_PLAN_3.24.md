@@ -178,8 +178,18 @@ the unifying app shell is **`meldq/shell.py`** (`meldq` entry point → `meldq.m
 - Dark theme (M6) recolours the diff overlays + editor paper but NOT the active
   syntax-lexer token colours (still light-tuned) nor the DirDiff/VcView tree
   state colours — both wait on the full style-scheme system (backlog).
-- Patch export (`make_patch`) omits the `\ No newline at end of file` marker, so
-  a patch of a file without a trailing newline round-trips through meldq's own
-  importer but may not apply cleanly with GNU `patch`/`git apply` (M5 refinement).
 - `-a/--auto-compare` is a no-op: the fresh DirDiff/VcView scan eagerly on load,
   so folder comparison is already automatic; the flag has no extra effect.
+
+### Post-M6 polish (done)
+- **Editor font**: `MeldSciView` forces a uniform monospace font over every
+  lexer style, killing QScintilla's built-in "Comic Sans MS" *comment* default
+  (and Courier strings); the shell now also honours the `use_custom_font`/
+  `custom_font` prefs and re-applies on change.
+- **Patch export** (`make_patch`) now emits the `\ No newline at end of file`
+  marker, so a patch of a file without a trailing newline applies cleanly with
+  external `git apply`/`patch` (verified), not just meldq's own importer.
+- **Patch import** (`patchimport`) decodes sources encoding-aware (UTF-8 →
+  latin-1 fallback) and threads the source encoding/EOL into the FileDiff via
+  `set_encoding`, so accepting + saving a non-UTF-8 source writes it back
+  losslessly instead of clobbering it as UTF-8.

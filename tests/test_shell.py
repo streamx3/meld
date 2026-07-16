@@ -267,6 +267,27 @@ def test_import_patch_missing_source_is_new_file(window, tmp_path):
 
 # ----- dialogs / lifecycle --------------------------------------------------
 
+def test_import_patch_saves_back_with_source_encoding(window, tmp_path):
+    # Regression: a latin-1 source patched + accepted must save back losslessly,
+    # not get clobbered as UTF-8 (the read used to be utf-8/errors=replace).
+    src = tmp_path / "f.txt"
+    src.write_bytes("caf\xe9\nline2\n".encode("latin-1"))
+    patch = ("--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n"
+             " caf\xe9\n-line2\n+LINE2\n")
+    view = window.import_patch(str(tmp_path), patch)[0]
+    assert view.panes[1].text() == "caf\xe9\nLINE2\n"      # decoded, not mojibake
+    view.save(1)                                            # accept -> write back
+    assert src.read_bytes() == "caf\xe9\nLINE2\n".encode("latin-1")
+
+
+def test_custom_font_pref_applies_to_editors(window, two_files):
+    from PyQt6.QtGui import QFont
+    view = window.append_filediff(list(two_files))
+    window.prefs.use_custom_font = True
+    window.prefs.custom_font = QFont("Courier New", 12).toString()
+    assert view.panes[0]._base_font.family() == "Courier New"
+
+
 def test_new_comparison_dialog_constructs(window):
     dialog = NewComparisonDialog(window)
     assert dialog.notebook.count() == 3

@@ -255,6 +255,19 @@ class MeldWindow(QMainWindow):
             if isinstance(widget, FileDiffView):
                 widget.set_theme(theme)
 
+    def _apply_font_to(self, view):
+        """Apply the current editor font pref (custom, or the system fixed font)
+        to every pane of `view`."""
+        font = self.prefs.get_current_font()
+        for pane in view.panes:
+            pane.set_base_font(font)
+
+    def _reapply_font(self):
+        for i in range(self.tabs.count()):
+            widget = self.tabs.widget(i)
+            if isinstance(widget, FileDiffView):
+                self._apply_font_to(widget)
+
     # ----- tab helpers ------------------------------------------------------
 
     def _add_tab(self, widget, title, icon_name=None):
@@ -297,6 +310,7 @@ class MeldWindow(QMainWindow):
         view = FileDiffView(len(files))
         view.set_files(files)
         view.set_theme(self._theme_obj())
+        self._apply_font_to(view)
         self._add_tab(view, self._diff_title(files, labels), "text-x-generic")
         return view
 
@@ -440,15 +454,21 @@ class MeldWindow(QMainWindow):
         from meldq.patchimport import patch_targets
 
         views = []
-        for path, original, patched in patch_targets(base_dir, patch_text):
+        for target in patch_targets(base_dir, patch_text):
             view = FileDiffView(2)
-            view.set_texts([original, patched], [path, path])
+            view.set_texts([target.original, target.patched],
+                           [target.path, target.path])
+            # Preserve the source's encoding/EOL so accepting + saving writes
+            # the file back losslessly (no UTF-8 clobber of a latin-1 source).
+            view.set_encoding(0, target.encoding, target.eol)
+            view.set_encoding(1, target.encoding, target.eol)
             # Left = the untouched source (reference, read-only); right = the
             # patched result the user reviews. Only the right pane is saveable,
             # so Save can never write the original back over the same path.
             view.panes[0].setReadOnly(True)
             view.set_theme(self._theme_obj())
-            self._add_tab(view, _("patch: %s") % os.path.basename(path),
+            self._apply_font_to(view)
+            self._add_tab(view, _("patch: %s") % os.path.basename(target.path),
                           "text-x-generic")
             views.append(view)
         return views
@@ -563,6 +583,8 @@ class MeldWindow(QMainWindow):
     def _on_pref_changed(self, key):
         if key == "theme":
             self._apply_theme(self.prefs.theme)
+        elif key in ("custom_font", "use_custom_font"):
+            self._reapply_font()
         elif key == "toolbar_visible":
             self.toolbar.setVisible(bool(self.prefs.toolbar_visible))
             self.action_toolbar_visible.setChecked(bool(self.prefs.toolbar_visible))

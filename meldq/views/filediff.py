@@ -232,6 +232,14 @@ class FileDiffView(QWidget):
         """The on-disk path backing `pane`, or None (never loaded from a file)."""
         return self._paths[pane]
 
+    def set_encoding(self, pane, encoding, eol=None):
+        """Set the encoding (and optionally EOL) used to write `pane` back.
+        A buffer populated via set_texts (e.g. patch import) otherwise defaults
+        to utf-8; setting the source's real encoding here keeps save faithful."""
+        self._encoding[pane] = encoding or "utf-8"
+        if eol:
+            self._eol[pane] = eol
+
     def focused_pane(self):
         """The pane index that currently has keyboard focus (0 if none)."""
         return self._focused_pane()
@@ -262,9 +270,18 @@ class FileDiffView(QWidget):
         lb = self._paths[right_pane] or "b"
         if reverse:
             a, b, la, lb = b, a, lb, la
-        return "".join(difflib.unified_diff(
-            a, b, fromfile="a/" + os.path.basename(la),
-            tofile="b/" + os.path.basename(lb)))
+        lines = []
+        for line in difflib.unified_diff(
+                a, b, fromfile="a/" + os.path.basename(la),
+                tofile="b/" + os.path.basename(lb)):
+            # A body line with no trailing newline means the file's final line
+            # lacks one; emit the standard marker so external patch/git apply
+            # accept it (meldq's own importer tolerates either form).
+            if line[:1] in (" ", "-", "+") and not line.endswith("\n"):
+                lines.append(line + "\n\\ No newline at end of file\n")
+            else:
+                lines.append(line)
+        return "".join(lines)
 
     def theme(self):
         return self._theme

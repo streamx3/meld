@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass
 
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFontDatabase
 from PyQt6.Qsci import (
     QsciLexerBash,
     QsciLexerCPP,
@@ -100,8 +100,15 @@ class MeldSciView(QsciScintilla):
         super().__init__(parent)
         self._theme = LIGHT
         self._lexer = None              # hold a ref; QScintilla doesn't own it
+        # A uniform monospace font for every style. QScintilla lexers default
+        # their *comment* style to "Comic Sans MS" (a long-standing upstream
+        # Scintilla in-joke) and strings to Courier; set_base_font forces one
+        # font over all styles so the editor stays uniformly monospaced.
+        self._base_font = QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont)
 
         self.setUtf8(True)
+        self.setFont(self._base_font)
         self.setEolMode(QsciScintilla.EolMode.EolUnix)   # display in \n; text() is \n-only
         self.setIndentationsUseTabs(False)
         self.setTabWidth(4)
@@ -127,6 +134,16 @@ class MeldSciView(QsciScintilla):
             lambda _v: self.scrolled.emit())
 
     # ----- theme ------------------------------------------------------------
+
+    def set_base_font(self, font):
+        """Set the editor font across every style (overriding the lexers'
+        Comic-Sans comment / Courier string defaults). Honours the user's
+        custom-font preference when the shell passes it in."""
+        self._base_font = font
+        self.setFont(font)
+        if self._lexer is not None:
+            self._lexer.setDefaultFont(font)
+            self._lexer.setFont(font, -1)
 
     def apply_theme(self, theme):
         self._theme = theme
@@ -172,6 +189,8 @@ class MeldSciView(QsciScintilla):
         lexer = factory(self)
         lexer.setDefaultPaper(QColor(self._theme.paper))
         lexer.setPaper(QColor(self._theme.paper), -1)
+        lexer.setDefaultFont(self._base_font)
+        lexer.setFont(self._base_font, -1)     # kill the per-style Comic Sans/Courier
         self._lexer = lexer                    # keep a Python ref alive
         self.setLexer(lexer)
 

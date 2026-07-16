@@ -27,19 +27,19 @@ def test_patch_targets_modifies_existing(tmp_path):
     patch = make_patch("one\ntwo\n", "one\nTWO\n")
     targets = patch_targets(str(tmp_path), patch)
     assert len(targets) == 1
-    path, original, patched = targets[0]
-    assert path.endswith("f.txt")
-    assert original == "one\ntwo\n"
-    assert patched == "one\nTWO\n"
+    target = targets[0]
+    assert target.path.endswith("f.txt")
+    assert target.original == "one\ntwo\n"
+    assert target.patched == "one\nTWO\n"
 
 
 def test_patch_targets_new_file(tmp_path):
     # patch adds a file that isn't on disk -> original "", patched = additions
     patch = make_patch("", "hello\nworld\n", path="new.txt")
-    (path, original, patched), = patch_targets(str(tmp_path), patch)
-    assert path.endswith("new.txt")
-    assert original == ""
-    assert patched == "hello\nworld\n"
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.path.endswith("new.txt")
+    assert target.original == ""
+    assert target.patched == "hello\nworld\n"
 
 
 def test_patch_targets_multi_file(tmp_path):
@@ -102,6 +102,35 @@ def test_export_then_import_roundtrip(qapp, qtbot, tmp_path):
     fd.set_texts([src, tgt], [str(tmp_path / "f.txt"), str(tmp_path / "f.txt")])
     patch = fd.make_patch()
     # ...then importing it against the source reproduces the target.
-    (_path, original, patched), = patch_targets(str(tmp_path), patch)
-    assert original == src
-    assert patched == tgt
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.original == src
+    assert target.patched == tgt
+
+
+def test_export_marks_missing_final_newline(qapp, qtbot, tmp_path):
+    # A file whose last line lacks a trailing newline must round-trip: the
+    # exported patch carries the "\ No newline at end of file" marker and the
+    # importer reproduces the exact target.
+    from meldq.views.filediff import FileDiffView
+    src, tgt = "a\nb\nc", "a\nB\nc"          # no trailing newline
+    (tmp_path / "f.txt").write_text(src)
+    fd = FileDiffView(2)
+    qtbot.addWidget(fd)
+    fd.set_texts([src, tgt], [str(tmp_path / "f.txt")] * 2)
+    patch = fd.make_patch()
+    assert "\\ No newline at end of file" in patch
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.patched == tgt
+
+
+def test_patch_targets_preserves_non_utf8_encoding(tmp_path):
+    # A latin-1 source (0xe9 = 'é') must be decoded faithfully and its encoding
+    # reported, so accepting + saving the patch never clobbers it as UTF-8.
+    (tmp_path / "f.txt").write_bytes("caf\xe9\nline2\n".encode("latin-1"))
+    patch = make_patch("caf\xe9\nline2\n", "caf\xe9\nLINE2\n")
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.original == "caf\xe9\nline2\n"       # decoded, not mojibake
+    assert target.encoding == "latin-1"
+    assert target.patched == "caf\xe9\nLINE2\n"
+    # round-trip: re-encoding with the reported codec reproduces the bytes.
+    assert target.patched.encode(target.encoding) == "caf\xe9\nLINE2\n".encode("latin-1")

@@ -105,3 +105,23 @@ def test_coordinate_helpers(view):
 def test_scroll_to_line_does_not_raise(view):
     view.set_text("\n".join(str(i) for i in range(200)))
     view.scroll_to_line(100)                     # exercises SCI_VISIBLEFROMDOCLINE
+
+
+# ----- font normalisation (kill the QScintilla Comic Sans comment default) ---
+
+def test_lexer_comment_font_is_not_comic_sans(view):
+    # QScintilla lexers default the comment style to "Comic Sans MS"; MeldSciView
+    # must force a uniform monospace font over every style.
+    for path, comment_style in (("x.py", 1), ("x.cpp", 2), ("x.js", 2)):
+        view.set_language_for(path)
+        fam = view._lexer.font(comment_style).family()
+        assert fam != "Comic Sans MS"
+        assert fam == view._base_font.family()
+
+
+def test_set_base_font_propagates_to_lexer(view):
+    from PyQt6.QtGui import QFont
+    view.set_language_for("x.py")
+    view.set_base_font(QFont("Courier New", 13))
+    assert view._base_font.family() == "Courier New"       # recorded
+    assert view._lexer.font(1).family() == "Courier New"   # comment style follows
