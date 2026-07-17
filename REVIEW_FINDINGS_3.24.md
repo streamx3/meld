@@ -350,7 +350,9 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - P4+P7+P10+P11 — renames (pure + edit), git-quoted paths, binary entries reported, delete patches flagged ✅
   - P5 — patch_targets refuses absolute / ../ paths escaping the base dir ✅
   - **Phase 1 (P1–P12) DONE**
-- ⬜ Phases 2–7 — pending.
+- 🟡 **Phase 2 — in progress:**
+  - M1 — scroll-stable targeted merge (replace_line_range) ✅
+- ⬜ Phases 2 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will

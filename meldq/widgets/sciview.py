@@ -251,12 +251,34 @@ class MeldSciView(QsciScintilla):
 
     def replace_all_text(self, text):
         """Replace the whole document as ONE undoable edit (native Scintilla
-        undo), unlike setText which resets the document and clears undo. Used
-        by merge operations so they can be undone."""
+        undo), unlike setText which resets the document and clears undo."""
         self.beginUndoAction()
         self.selectAll(True)
         self.replaceSelectedText(text)
         self.endUndoAction()
+
+    def replace_line_range(self, line_from, line_to, seg_lines):
+        """Replace document lines [line_from, line_to) with `seg_lines` (a list
+        of line strings, no trailing newlines) as ONE undoable edit, WITHOUT
+        throwing the view to end-of-document. Unlike replace_all_text
+        (selectAll -> caret at EOF -> scroll to EOF), this touches only the
+        chunk's range and restores the first visible line, so a merge near the
+        top of a long file keeps the user's place."""
+        first_visible = self.first_visible_line()
+        start = self.positionFromLineIndex(line_from, 0)
+        if line_to < self.lines():
+            end = self.positionFromLineIndex(line_to, 0)
+            payload = ("\n".join(seg_lines) + "\n") if seg_lines else ""
+        else:
+            end = self.length()
+            payload = "\n".join(seg_lines)
+        sl, si = self.lineIndexFromPosition(start)
+        el, ei = self.lineIndexFromPosition(end)
+        self.beginUndoAction()
+        self.setSelection(sl, si, el, ei)
+        self.replaceSelectedText(payload)
+        self.endUndoAction()
+        self.scroll_to_line(first_visible)
 
     def set_language_for(self, path):
         ext = os.path.splitext(path or "")[1].lower()

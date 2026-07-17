@@ -169,6 +169,24 @@ def test_merge_is_undoable(fd):
     assert KIND_REPLACE in kinds(fd, 1, 1)        # and the diff re-renders
 
 
+def test_merge_near_top_keeps_scroll_position(fd, qtbot):
+    # M1: a merge near the top of a long file must NOT throw the view to EOF.
+    n = 400
+    left = "".join("L%d\n" % i for i in range(n))
+    right = "".join(("CHG\n" if i == 5 else "L%d\n" % i) for i in range(n))
+    fd.set_texts([left, right])
+    fd.resize(700, 300)
+    fd.show()
+    qtbot.waitExposed(fd)
+    for p in fd.panes:
+        p.scroll_to_line(0)
+    chunk = fd.chunk_at_line(0, 5)
+    fd.copy_chunk(chunk, src_pane=0, dst_pane=1)
+    assert fd.panes[1].text().split("\n")[5] == "L5"      # merge applied
+    # The destination pane stays near the top, not scrolled to the bottom.
+    assert fd.panes[1].first_visible_line() < 20
+
+
 # ----- M2: encoding-aware load / save ---------------------------------------
 
 def test_save_roundtrip_lf(fd, tmp_path):

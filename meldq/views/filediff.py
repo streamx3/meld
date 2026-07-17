@@ -496,17 +496,13 @@ class FileDiffView(QWidget):
         """[2-way] replace dst_pane's side of `chunk` with src_pane's lines."""
         src_lo, src_hi = self._pane_range(chunk, src_pane)
         dst_lo, dst_hi = self._pane_range(chunk, dst_pane)
-        src_lines = self._pane_lines(src_pane)
-        dst_lines = self._pane_lines(dst_pane)
-        seg = src_lines[src_lo:src_hi]
-        new_dst = dst_lines[:dst_lo] + seg + dst_lines[dst_hi:]
-        self.panes[dst_pane].replace_all_text("\n".join(new_dst))
+        seg = self._pane_lines(src_pane)[src_lo:src_hi]
+        self.panes[dst_pane].replace_line_range(dst_lo, dst_hi, seg)
 
     def delete_chunk(self, chunk, pane):
         """[2-way] remove pane's side of `chunk` (undoable)."""
         lo, hi = self._pane_range(chunk, pane)
-        lines = self._pane_lines(pane)
-        self.panes[pane].replace_all_text("\n".join(lines[:lo] + lines[hi:]))
+        self.panes[pane].replace_line_range(lo, hi, [])
 
     def outer_chunk_at_line(self, pane, line):
         """[3-way] the change on outer `pane` (0 or 2) covering `line`, as
@@ -522,9 +518,7 @@ class FileDiffView(QWidget):
         `pane`'s lines (undoable)."""
         this_lo, this_hi, base_lo, base_hi = chunk[1], chunk[2], chunk[3], chunk[4]
         seg = self._pane_lines(pane)[this_lo:this_hi]
-        base_lines = self._pane_lines(1)
-        new_base = base_lines[:base_lo] + seg + base_lines[base_hi:]
-        self.panes[1].replace_all_text("\n".join(new_base))
+        self.panes[1].replace_line_range(base_lo, base_hi, seg)
 
     def _on_action(self, pane, line):
         # Merge arrow clicked. 2-way: send that pane's side to the other pane.
