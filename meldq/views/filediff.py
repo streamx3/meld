@@ -103,6 +103,8 @@ class FileDiffView(QWidget):
         self._eol = ["\n"] * num_panes
         self._syncing = False
         self._loading = False           # suppress re-diff while loading files
+        self._last_edited_pane = 0      # undo/redo target (a merge edits a pane
+                                        # other than the focused one)
         self._theme = LIGHT
         self.differ = Differ()          # used for the 3-way path
 
@@ -143,7 +145,8 @@ class FileDiffView(QWidget):
         self.panes[-1].set_action_symbol(_arrow_pixmap("left"))
         for pane, view in enumerate(self.panes):
             view.scrolled.connect(self._on_scrolled)
-            view.textChanged.connect(self._on_text_changed)   # live re-diff
+            view.textChanged.connect(
+                lambda p=pane: self._on_text_changed(p))      # live re-diff
             view.action_clicked.connect(
                 lambda line, p=pane: self._on_action(p, line))
 
@@ -238,6 +241,30 @@ class FileDiffView(QWidget):
         self._recompute()
 
     # ----- saving -----------------------------------------------------------
+
+    def undo(self):
+        """Undo the most recent edit. A merge writes a pane other than the
+        focused one, so undo/redo target the last-edited pane rather than
+        whatever has keyboard focus (fixing 'Ctrl+Z after a merge does
+        nothing')."""
+        self._undo_redo("undo")
+
+    def redo(self):
+        self._undo_redo("redo")
+
+    def _undo_redo(self, which):
+        pane = self._last_edited_pane
+        available = (self.panes[pane].isUndoAvailable() if which == "undo"
+                     else self.panes[pane].isRedoAvailable())
+        if not available:
+            # The tracked pane has nothing to (un)do — fall back to any pane
+            # that does, so the key is never a dead no-op after focus moves.
+            for i, p in enumerate(self.panes):
+                if (p.isUndoAvailable() if which == "undo"
+                        else p.isRedoAvailable()):
+                    pane = i
+                    break
+        getattr(self.panes[pane], which)()
 
     def is_modified(self, pane):
         return self.panes[pane].isModified()
@@ -383,11 +410,13 @@ class FileDiffView(QWidget):
                 pass
         self._render()
 
-    def _on_text_changed(self):
+    def _on_text_changed(self, pane=None):
         # Synchronous full re-diff. Correct + deterministic; the Differ's
         # incremental change_sequence swaps in when large-file perf matters.
         if self._loading:
             return
+        if pane is not None:
+            self._last_edited_pane = pane   # undo/redo follow the real edit
         self._recompute()
 
     def _render(self):

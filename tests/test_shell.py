@@ -250,6 +250,19 @@ def test_save_writes_modified_pane(window, two_files):
     assert not view.is_modified(1)
 
 
+def test_edit_undo_reverts_a_merge(window, two_files):
+    # M3: Edit>Undo (Ctrl+Z) routes through the view so it undoes the merge,
+    # which edited the pane that does not hold focus.
+    a, b = two_files
+    view = window.append_filediff([a, b])
+    view.panes[0].action_clicked.emit(1)            # merge left -> right
+    merged = view.panes[1].text()
+    assert merged == view.panes[0].text()
+    view.panes[0].setFocus()
+    window.action_undo.trigger()                    # the real menu action
+    assert view.panes[1].text() != merged           # merge undone
+
+
 # ----- patch export ---------------------------------------------------------
 
 def test_patch_dialog_text_and_reverse(window, two_files):

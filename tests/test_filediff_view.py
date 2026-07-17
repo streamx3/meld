@@ -312,6 +312,19 @@ def test_click_empty_margin_unchanged_line_is_noop(fd):
     assert (fd.panes[0].text(), fd.panes[1].text()) == before
 
 
+def test_view_undo_reverts_merge_regardless_of_focus(fd):
+    # M3: a merge edits the OTHER pane; view-level undo must revert it even
+    # though the source pane holds focus (shell routes Ctrl+Z here).
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[0].action_clicked.emit(1)              # merge left -> right pane 1
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"
+    fd.panes[0].setFocus()                          # focus on the SOURCE pane
+    fd.undo()
+    assert fd.panes[1].text() == "a\nRIGHT\nb\n"    # merge reverted
+    fd.redo()
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"     # and redoable
+
+
 # ----- M2: next/previous change navigation ----------------------------------
 
 def test_next_diff_walks_chunks(fd):

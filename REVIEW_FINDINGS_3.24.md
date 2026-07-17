@@ -353,6 +353,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
 - 🟡 **Phase 2 — in progress:**
   - M1 — scroll-stable targeted merge (replace_line_range) ✅
   - M2 — action clicks guarded by has_action_marker (no destructive empty-margin merge) ✅
+  - M3 — view-level undo/redo follow the last-edited pane (Ctrl+Z reverts a merge) ✅
 - ⬜ Phases 2 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

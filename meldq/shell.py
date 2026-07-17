@@ -549,6 +549,14 @@ class MeldWindow(QMainWindow):
     # ----- edit / navigation ------------------------------------------------
 
     def _editor_action(self, name):
+        # Undo/redo route through the FileDiff view to the pane that actually
+        # last changed — a merge edits a pane other than the focused one, so
+        # focusWidget().undo() would miss it. Cut/copy/paste stay on focus.
+        if name in ("undo", "redo"):
+            view = self._current_filediff()
+            if view is not None:
+                getattr(view, name)()
+                return
         widget = self.focusWidget()
         method = getattr(widget, name, None)
         if callable(method):
