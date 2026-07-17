@@ -179,10 +179,15 @@ def apply_hunks(source_text, hunks, reverse=False, max_offset=1000):
     for hunk in hunks:
         if reverse:
             old, new = hunk.new_block(), hunk.old_block()
-            center = (hunk.tgt_start - 1) + offset
+            start = hunk.tgt_start
         else:
             old, new = hunk.old_block(), hunk.new_block()
-            center = (hunk.src_start - 1) + offset
+            start = hunk.src_start
+        # A non-empty range starts at 1-based `start` (0-based start-1). A
+        # zero-length range (pure insertion, e.g. `@@ -5,0 +6 @@` from
+        # `git diff -U0`) means "insert AFTER line `start`", i.e. 0-based
+        # index `start` — using start-1 there splices one line too early.
+        center = (start if not old else start - 1) + offset
         pos = _find(result, old, center, max_offset)
         if pos < 0:
             raise PatchError(

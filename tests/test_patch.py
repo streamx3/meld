@@ -71,6 +71,37 @@ def test_pure_deletion():
 
 
 # ---------------------------------------------------------------------------
+# zero-context (`git diff -U0`) insert lands AFTER the named line, not before
+# ---------------------------------------------------------------------------
+
+def test_u0_insert_position():
+    src = "".join("L%d\n" % i for i in range(1, 11))
+    # git diff -U0 form: insert one line after L5.
+    patch = "--- a/f\n+++ b/f\n@@ -5,0 +6 @@\n+INSERTED\n"
+    out = apply_patch(src, parse_patch(patch)[0])
+    lines = out.splitlines()
+    assert lines[4:6] == ["L5", "INSERTED"]     # after L5, before L6
+
+
+def test_u0_insert_at_start():
+    src = "L1\nL2\n"
+    patch = "--- a/f\n+++ b/f\n@@ -0,0 +1 @@\n+HEAD\n"
+    out = apply_patch(src, parse_patch(patch)[0])
+    assert out.splitlines() == ["HEAD", "L1", "L2"]
+
+
+def test_u0_two_inserts_both_land_correctly():
+    src = "".join("L%d\n" % i for i in range(1, 11))
+    # Insert A after L1 and B after L6; the second hunk's offset accounts for A.
+    patch = ("--- a/f\n+++ b/f\n"
+             "@@ -1,0 +2 @@\n+A\n"
+             "@@ -6,0 +8 @@\n+B\n")
+    out = apply_patch(src, parse_patch(patch)[0]).splitlines()
+    assert out[1] == "A"                        # after L1
+    assert out[out.index("B") - 1] == "L6"      # after L6
+
+
+# ---------------------------------------------------------------------------
 # offset tolerance: patch made against an older revision still applies
 # ---------------------------------------------------------------------------
 
