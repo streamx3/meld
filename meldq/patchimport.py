@@ -53,6 +53,21 @@ def _detect_eol(text):
     return "\r\n" if "\r\n" in text else ("\r" if "\r" in text else "\n")
 
 
+def read_patch_text(path):
+    """Read a .patch file preserving its bytes' meaning: binary read (so the
+    \\r in CRLF content lines survives — text mode's newline translation broke
+    every CRLF patch) and encoding-aware decode (utf-8 then latin-1, so a
+    legacy-encoded patch isn't corrupted by errors='replace')."""
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    for encoding in _CODECS:
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def patch_targets(base_dir, patch_text):
     """[PatchTarget] for each file named in the patch.
 

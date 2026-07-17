@@ -491,8 +491,8 @@ class MeldWindow(QMainWindow):
         if not base_dir:
             return
         try:
-            with open(patch_path, encoding="utf-8", errors="replace") as handle:
-                patch_text = handle.read()
+            from meldq.patchimport import read_patch_text
+            patch_text = read_patch_text(patch_path)
             views = self.import_patch(base_dir, patch_text)
         except Exception as exc:          # PatchError, OSError, decode issues
             QMessageBox.warning(self, "Meld",

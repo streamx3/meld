@@ -5,7 +5,7 @@ import difflib
 import pytest
 
 from meldq.patch import PatchError
-from meldq.patchimport import open_in_filediffs, patch_targets
+from meldq.patchimport import open_in_filediffs, patch_targets, read_patch_text
 from meldq.widgets.sciview import KIND_INSERT, KIND_REPLACE
 
 
@@ -134,3 +134,35 @@ def test_patch_targets_preserves_non_utf8_encoding(tmp_path):
     assert target.patched == "caf\xe9\nLINE2\n"
     # round-trip: re-encoding with the reported codec reproduces the bytes.
     assert target.patched.encode(target.encoding) == "caf\xe9\nLINE2\n".encode("latin-1")
+
+
+# ---------------------------------------------------------------------------
+# P1: patch files are read as bytes — CRLF content and non-UTF-8 survive
+# ---------------------------------------------------------------------------
+
+def test_read_patch_text_preserves_crlf(tmp_path):
+    # A patch OF a CRLF file carries \r\n inside its content lines. Text-mode
+    # reading (newline translation) used to strip them -> context mismatch.
+    src = tmp_path / "f.txt"
+    src.write_bytes(b"one\r\ntwo\r\n")
+    patch_file = tmp_path / "c.patch"
+    patch_file.write_bytes(
+        b"--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n"
+        b" one\r\n-two\r\n+TWO\r\n")
+    text = read_patch_text(str(patch_file))
+    assert "\r\n" in text
+    target, = patch_targets(str(tmp_path), text)
+    assert target.patched == "one\r\nTWO\r\n"
+
+
+def test_read_patch_text_latin1_fallback(tmp_path):
+    src = tmp_path / "f.txt"
+    src.write_bytes("caf\xe9\n".encode("latin-1"))
+    patch_file = tmp_path / "l.patch"
+    patch_file.write_bytes(
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1,1 +1,2 @@\n"
+        " caf\xe9\n+line2\n".encode("latin-1"))
+    text = read_patch_text(str(patch_file))
+    target, = patch_targets(str(tmp_path), text)
+    assert target.patched == "caf\xe9\nline2\n"
+    assert target.encoding == "latin-1"
