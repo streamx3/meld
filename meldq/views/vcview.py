@@ -121,7 +121,15 @@ class VcView(QWidget):
         self.model.removeRows(0, self.model.rowCount())
         if self.repo_root is None:
             return
-        for relpath, state in sorted(gitvc.status(self.repo_root).items()):
+        # git shells out; if the repo dir vanished or git is missing the call
+        # raises OSError. A slot exception is fatal in PyQt6, so degrade to a
+        # message bar rather than aborting the app.
+        try:
+            rows = sorted(gitvc.status(self.repo_root).items())
+        except OSError as exc:
+            self.infobar.show_message("Version control error: %s" % exc)
+            return
+        for relpath, state in rows:
             self.model.appendRow(self._make_row(relpath, state))
 
     def _make_row(self, relpath, state):
@@ -172,7 +180,11 @@ class VcView(QWidget):
         if relpath is None or self.repo_root is None:
             return
         working = os.path.join(self.repo_root, relpath)
-        head_bytes = gitvc.repo_file_content(self.repo_root, relpath)
+        try:
+            head_bytes = gitvc.repo_file_content(self.repo_root, relpath)
+        except OSError as exc:
+            self.infobar.show_message("Version control error: %s" % exc)
+            return
         left = self._materialize(relpath, head_bytes)
         right = working if os.path.exists(working) else self._materialize(
             relpath + ".missing", b"")
@@ -183,7 +195,11 @@ class VcView(QWidget):
     def _act(self, index, fn):
         relpath = self.row_relpath(index)
         if relpath is not None and self.repo_root is not None:
-            fn(self.repo_root, relpath)
+            try:
+                fn(self.repo_root, relpath)
+            except OSError as exc:
+                self.infobar.show_message("Version control error: %s" % exc)
+                return
             self.refresh()
 
     def add(self, index):
@@ -206,7 +222,11 @@ class VcView(QWidget):
     def commit_files(self, relpaths, message):
         """Commit the given files with `message` and refresh (no dialog)."""
         if relpaths and message.strip() and self.repo_root is not None:
-            gitvc.commit(self.repo_root, message, relpaths)
+            try:
+                gitvc.commit(self.repo_root, message, relpaths)
+            except OSError as exc:
+                self.infobar.show_message("Version control error: %s" % exc)
+                return
             self.refresh()
 
     def on_commit(self):

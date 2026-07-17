@@ -2,9 +2,35 @@
 
 import argparse
 import sys
+import traceback
 
 from meldq import __version__, conf
 from meldq.conf import _
+
+
+def install_excepthook():
+    """Keep an unhandled exception in a Qt slot from aborting the process.
+
+    Since PyQt6 5.5, an exception that propagates out of a slot/virtual calls
+    Qt's qFatal() -> abort() unless sys.excepthook has been replaced. Install a
+    net that logs the traceback and (if a GUI is up) shows a non-fatal dialog,
+    so a bug in one action can't take the whole app down mid-edit. Local slots
+    still guard their own I/O to give the user a specific, actionable message;
+    this is the backstop for everything else."""
+    def hook(exctype, value, tb):
+        if issubclass(exctype, KeyboardInterrupt):
+            sys.__excepthook__(exctype, value, tb)
+            return
+        traceback.print_exception(exctype, value, tb)
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+            if QApplication.instance() is not None:
+                QMessageBox.critical(
+                    None, "Meld",
+                    _("An unexpected error occurred:\n\n%s") % value)
+        except Exception:
+            pass                        # never let the handler itself raise
+    sys.excepthook = hook
 
 
 def _missing_reqs(mod, exc=None):
@@ -84,6 +110,7 @@ def main(argv=None):
     app.setApplicationVersion(__version__)
     app.setOrganizationName("meldq")
     app.setWindowIcon(QIcon(str(conf.icon_path("icon.png"))))
+    install_excepthook()
 
     args = parse_args(argv)
     prefs = Preferences()

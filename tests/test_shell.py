@@ -7,8 +7,8 @@ headless; the fixture stubs the only close-time prompt).
 """
 
 import pytest
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import QEvent, QSettings
+from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from meldq.shell import MeldWindow, NewComparisonDialog, PatchDialog
 from meldq.util.prefs import Preferences
@@ -320,6 +320,20 @@ def test_import_patch_saves_back_with_source_encoding(window, tmp_path):
     assert view.panes[1].text() == "caf\xe9\nLINE2\n"      # decoded, not mojibake
     view.save(1)                                            # accept -> write back
     assert src.read_bytes() == "caf\xe9\nLINE2\n".encode("latin-1")
+
+
+def test_patch_dialog_closes_when_its_tab_closes(window, two_files):
+    # C3: a modeless PatchDialog holding a FileDiffView must not outlive it —
+    # interacting with a dialog whose view was deleted aborts the app.
+    view = window.append_filediff(list(two_files))
+    dialog = window.on_create_patch()
+    closed = []
+    dialog.finished.connect(lambda _r: closed.append(True))
+    window._on_tab_close_requested(window.tabs.currentIndex())
+    # Flush the view's deferred deletion so its destroyed() fires.
+    QApplication.sendPostedEvents(view, QEvent.Type.DeferredDelete)
+    QApplication.processEvents()
+    assert closed == [True]                     # dialog auto-closed with its tab
 
 
 def test_import_patch_on_save_writes_patched_result(window, tmp_path):

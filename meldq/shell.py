@@ -738,14 +738,21 @@ class PatchDialog(QDialog):
         layout.addWidget(buttons)
 
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        # If the underlying comparison tab is closed, this modeless dialog would
+        # be left holding a deleted FileDiffView; any interaction then calls
+        # make_patch on freed C++ panes and aborts the app. Close with the view.
+        filediff.destroyed.connect(self.reject)
         self._refresh()
 
     def _pair(self):
         return self.pair.currentData() if self.pair else (0, 1)
 
     def patch_text(self):
-        left, right = self._pair()
-        return self.filediff.make_patch(left, right, self.reverse.isChecked())
+        try:
+            left, right = self._pair()
+            return self.filediff.make_patch(left, right, self.reverse.isChecked())
+        except RuntimeError:            # underlying view already deleted
+            return ""
 
     def _refresh(self, *args):
         self.text.setPlainText(self.patch_text())
@@ -757,8 +764,12 @@ class PatchDialog(QDialog):
         path, _selected = QFileDialog.getSaveFileName(
             self, _("Save Patch"), "changes.diff")
         if path:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(self.patch_text())
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(self.patch_text())
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Meld", _("Could not save patch: %s") % exc)
 
 
 class NewComparisonDialog(QDialog):

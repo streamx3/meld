@@ -61,8 +61,11 @@ def _arrow_pixmap(direction, color="#707070", size=12):
 
 
 def _file_token(path):
-    """A content hash of `path` (None if unreadable). Used to tell a real
-    external change from our own save when the on-disk file changes."""
+    """A content hash of `path` (None if unreadable or path is None). Used to
+    tell a real external change from our own save when the on-disk file
+    changes."""
+    if not path:
+        return None
     try:
         with open(path, "rb") as f:
             return hashlib.sha1(f.read()).hexdigest()
@@ -149,12 +152,19 @@ class FileDiffView(QWidget):
     def set_files(self, paths):
         texts = []
         for i, path in enumerate(paths):
+            # A missing/None path opens as an empty, creatable pane (Meld lets
+            # you diff against / write a not-yet-existing file). An existing but
+            # unreadable file (permissions, races) must not abort the app — a
+            # slot exception is fatal in PyQt6 — so it degrades to an empty pane
+            # plus a message bar.
+            text, encoding, eol = "", "utf-8", "\n"
             if path and os.path.isfile(path):
-                text, encoding, eol = load_file(path)
-            else:
-                # A missing path opens as an empty, creatable pane (Meld lets
-                # you diff against / write a not-yet-existing file); never crash.
-                text, encoding, eol = "", "utf-8", "\n"
+                try:
+                    text, encoding, eol = load_file(path)
+                except OSError as exc:
+                    self.infobar.show_message(
+                        'Could not read "%s": %s'
+                        % (os.path.basename(path), exc))
             self._encoding[i] = encoding
             self._eol[i] = eol
             self._disk_token[i] = _file_token(path)
@@ -174,7 +184,12 @@ class FileDiffView(QWidget):
         path = self._paths[pane]
         if path is None:
             return
-        text, encoding, eol = load_file(path)
+        try:
+            text, encoding, eol = load_file(path)
+        except OSError as exc:
+            self.infobar.show_message(
+                'Could not reload "%s": %s' % (os.path.basename(path), exc))
+            return
         self._encoding[pane] = encoding
         self._eol[pane] = eol
         self._disk_token[pane] = _file_token(path)

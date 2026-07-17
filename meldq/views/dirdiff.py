@@ -291,11 +291,18 @@ class DirDiffView(QWidget):
         src, dst = self._path(index, src_pane), self._path(index, dst_pane)
         if src is None or not os.path.exists(src):
             return
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if os.path.isdir(src):
-            shutil.copytree(src, dst, dirs_exist_ok=True)
-        else:
-            shutil.copy2(src, dst)
+        # An I/O failure (dir-over-file collision, permissions, full disk) must
+        # not abort the app — a slot exception is fatal in PyQt6 — so surface it
+        # as a message bar instead.
+        try:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+        except OSError as exc:
+            self.infobar.show_message("Could not copy: %s" % exc)
+            return
         self.refresh()
 
     def delete(self, index, pane, to_trash=True):
@@ -303,12 +310,16 @@ class DirDiffView(QWidget):
         path = self._path(index, pane)
         if path is None or not os.path.exists(path):
             return
-        if to_trash and QFile.moveToTrash(path):
-            pass
-        elif os.path.isdir(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
+        try:
+            if to_trash and QFile.moveToTrash(path):
+                pass
+            elif os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+        except OSError as exc:
+            self.infobar.show_message("Could not delete: %s" % exc)
+            return
         self.refresh()
 
     # ----- context menu -----------------------------------------------------
