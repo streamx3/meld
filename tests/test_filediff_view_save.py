@@ -86,3 +86,31 @@ def test_plain_utf8_does_not_gain_a_bom(fd, tmp_path):
     fd.panes[0].set_text("HELLO\n")
     fd.save(0)
     assert p.read_bytes() == b"HELLO\n"                   # no BOM added
+
+
+def test_save_refuses_blind_overwrite(fd, tmp_path):
+    # M8: if the file changed on disk since load, save must not clobber it.
+    from meldq.views.filediff import FileChangedOnDiskError
+    p = tmp_path / "f.txt"
+    p.write_bytes(b"v1\n")
+    fd.set_files([str(p), str(p)])
+    fd.panes[0].set_text("my edit\n")
+    p.write_bytes(b"EXTERNAL CHANGE\n")               # someone else edited it
+    with pytest.raises(FileChangedOnDiskError):
+        fd.save(0)
+    assert p.read_bytes() == b"EXTERNAL CHANGE\n"     # not clobbered
+    fd.save(0, force=True)                             # explicit override
+    assert p.read_bytes() == b"my edit\n"
+
+
+def test_save_as_new_path_skips_overwrite_check(fd, tmp_path):
+    # Save-As to a different existing file writes (the file dialog already
+    # confirmed the overwrite); no spurious FileChangedOnDiskError.
+    src = tmp_path / "src.txt"
+    src.write_bytes(b"content\n")
+    other = tmp_path / "other.txt"
+    other.write_bytes(b"pre-existing\n")
+    fd.set_files([str(src), str(src)])
+    fd.panes[0].set_text("saved as\n")
+    fd.save(0, str(other))
+    assert other.read_bytes() == b"saved as\n"

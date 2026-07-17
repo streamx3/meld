@@ -33,6 +33,11 @@ from meldq.widgets.sciview import (
     MeldSciView,
 )
 
+class FileChangedOnDiskError(Exception):
+    """The file changed on disk since it was loaded or last saved; save refused
+    to blindly overwrite it. The caller can retry with force=True."""
+
+
 # 3-way tag -> chunk-background kind. insert/delete are the same "change" colour
 # (a deletion is a gap on one side, not red lines); conflict is distinct.
 _KIND_3WAY = {
@@ -296,7 +301,7 @@ class FileDiffView(QWidget):
         """The pane index that currently has keyboard focus (0 if none)."""
         return self._focused_pane()
 
-    def save(self, pane, path=None):
+    def save(self, pane, path=None, force=False):
         """Write `pane` back with its original encoding + EOL. The buffer is
         \\n-normalised, so we restore the file's line endings on the way out;
         the trailing-newline state rides along in the text itself.
@@ -305,10 +310,26 @@ class FileDiffView(QWidget):
         target is touched (so an un-encodable character raises without
         destroying the file), and the bytes go to a sibling temp file that is
         os.replace()d into place (so a crash mid-write can't leave a truncated
-        file). Any existing file mode is preserved across the replace."""
+        file). Any existing file mode is preserved across the replace.
+
+        Refuses to blindly overwrite: if the target is the file we loaded and
+        its on-disk content changed since (an external edit the reload prompt
+        may have missed), raise FileChangedOnDiskError unless force=True. A
+        Save-As to a new path skips the check (the file dialog already
+        confirmed the overwrite)."""
         path = path or self._paths[pane]
         if path is None:
             raise ValueError("no path to save pane %d" % pane)
+        same_path = path == self._paths[pane]
+        baseline = self._disk_token[pane]
+        if not force and same_path and baseline is not None \
+                and os.path.exists(path):
+            # Only refuse when we have a baseline to compare against; a buffer
+            # populated via set_texts (e.g. patch import) has none and is meant
+            # to write its shared path.
+            current = _file_token(path)
+            if current is not None and current != baseline:
+                raise FileChangedOnDiskError(path)
         text = self.panes[pane].text().replace("\n", self._eol[pane])
         data = text.encode(self._encoding[pane] or "utf-8")   # may raise; file untouched
         directory = os.path.dirname(os.path.abspath(path)) or "."

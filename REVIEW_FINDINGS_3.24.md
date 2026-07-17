@@ -355,6 +355,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - M2 — action clicks guarded by has_action_marker (no destructive empty-margin merge) ✅
   - M3 — view-level undo/redo follow the last-edited pane (Ctrl+Z reverts a merge) ✅
   - M7 — UTF-8 BOM round-trips on save (utf-8-sig), plain UTF-8 never gains one ✅
+  - M8 — save refuses blind overwrite of an externally-changed file (Overwrite/Reload) ✅
 - ⬜ Phases 2 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

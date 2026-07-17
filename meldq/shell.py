@@ -460,12 +460,25 @@ class MeldWindow(QMainWindow):
             self.tabs.setTabText(index, title)
 
     def _save_pane(self, view, pane, path=None):
+        from meldq.views.filediff import FileChangedOnDiskError
         try:
             view.save(pane, path)
             return True
+        except FileChangedOnDiskError:
+            self._prompt_overwrite(view, pane, path)
+            return False
         except (OSError, ValueError) as exc:
             self._warn(_("Could not save: %s") % exc)
             return False
+
+    def _prompt_overwrite(self, view, pane, path):
+        # Non-modal: the file changed on disk since we opened it. Offer to
+        # overwrite (force) or reload, rather than silently clobbering.
+        name = os.path.basename(view.path(pane) or path or "")
+        view.infobar.show_message(
+            _('"%s" changed on disk since you opened it.') % name,
+            [(_("Overwrite"), lambda: view.save(pane, path, force=True)),
+             (_("Reload"), lambda: view.reload(pane))])
 
     # ----- patch export -----------------------------------------------------
 
