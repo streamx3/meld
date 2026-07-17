@@ -277,3 +277,35 @@ def test_delete_patch_flagged(tmp_path):
     target, = patch_targets(str(tmp_path), patch)
     assert target.is_delete
     assert target.patched == ""
+
+
+# ---------------------------------------------------------------------------
+# P5: a patch cannot read or target files outside the chosen base directory
+# ---------------------------------------------------------------------------
+
+def test_absolute_header_path_refused(tmp_path):
+    outside = tmp_path / "outside" / "victim.txt"
+    outside.parent.mkdir()
+    outside.write_text("secret1\nsecret2\n")
+    base = tmp_path / "base"
+    base.mkdir()
+    patch = ("--- %s\n+++ %s\n@@ -1,2 +1,2 @@\n secret1\n-secret2\n+PWNED\n"
+             % (outside, outside))
+    with pytest.raises(PatchError, match="outside"):
+        patch_targets(str(base), patch)
+
+
+def test_dotdot_traversal_refused(tmp_path):
+    (tmp_path / "victim.txt").write_text("secret\n")
+    base = tmp_path / "base"
+    base.mkdir()
+    patch = ("--- a/../victim.txt\n+++ b/../victim.txt\n"
+             "@@ -1,1 +1,1 @@\n-secret\n+PWNED\n")
+    with pytest.raises(PatchError, match="outside"):
+        patch_targets(str(base), patch)
+
+
+def test_nameless_hunks_refused(tmp_path):
+    patch = "@@ -1,1 +1,1 @@\n-a\n+b\n"          # no file header at all
+    with pytest.raises(PatchError, match="name a target"):
+        patch_targets(str(tmp_path), patch)

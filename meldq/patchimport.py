@@ -14,7 +14,7 @@ write-back on save.
 import os
 from collections import namedtuple
 
-from meldq.patch import apply_patch, parse_patch
+from meldq.patch import PatchError, apply_patch, parse_patch
 
 # Codecs tried in order; latin-1 decodes any byte, so decode never fails and a
 # round-trip (decode -> encode with the same codec) is byte-preserving.
@@ -45,6 +45,22 @@ def _relpath(file_patch):
         if rel:
             return rel
     return ""
+
+
+def _resolve_under(base_dir, rel):
+    """`rel` joined onto `base_dir`, refusing escapes: an absolute header path
+    or a ../ traversal must not read or target files outside the directory the
+    user chose (a hostile patch is still just a text file)."""
+    base = os.path.abspath(base_dir)
+    resolved = os.path.abspath(os.path.join(base, rel))
+    try:
+        contained = os.path.commonpath([base, resolved]) == base
+    except ValueError:                    # e.g. different drives on Windows
+        contained = False
+    if not contained or resolved == base:
+        raise PatchError(
+            "patch names a path outside the chosen base directory: %r" % rel)
+    return resolved
 
 
 def _read_source(path):
@@ -106,11 +122,13 @@ def patch_targets_and_skipped(base_dir, patch_text):
         is_rename = bool(old_rel and rel and old_rel != rel)
         if not file_patch.hunks and not is_rename:
             continue          # header-only noise (e.g. a mode-change entry)
-        path = os.path.join(base_dir, rel)
+        if not rel:
+            raise PatchError("patch does not name a target file")
+        path = _resolve_under(base_dir, rel)
         src_path = path
         if not os.path.isfile(path) and is_rename:
             # Rename: the content lives under the old name pre-apply.
-            candidate = os.path.join(base_dir, old_rel)
+            candidate = _resolve_under(base_dir, old_rel)
             if os.path.isfile(candidate):
                 src_path = candidate
         if os.path.isfile(src_path):
