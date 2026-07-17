@@ -358,6 +358,8 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - M8 — save refuses blind overwrite of an externally-changed file (Overwrite/Reload) ✅
   - M10 — LinkMap draws a visible band for a change on the last newline-less line ✅
   - M9 — patch-import reference pane no longer gets a bogus reload prompt ✅
+  - M4+M5 — 3-way outer deletions get a clickable arrow; base inline diffs the correct outer pane ✅
+  - **Phase 2 DONE** (M6 = read-only-destination merge folded into M1/M2 semantics)
 - ⬜ Phases 2 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

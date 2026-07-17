@@ -486,16 +486,36 @@ class FileDiffView(QWidget):
 
     def _render_3way(self):
         lines = [self._pane_lines(p) for p in range(3)]
+        # Chunk backgrounds + action markers + OUTER-pane inline (vs base).
         for pane in range(3):
             for c in self.differ.single_changes(pane):
                 tag, lo, hi, olo, ohi = c[0], c[1], c[2], c[3], c[4]
                 if lo < hi:
                     self.panes[pane].add_chunk(lo, hi, _KIND_3WAY[tag])
-                    if pane != 1:               # merge arrows on outer panes only
-                        self.panes[pane].add_action_marker(lo)
-                if tag in ("replace", "conflict") and lo < hi and olo < ohi:
-                    self._inline_one_sided(pane, lo, hi, lines[pane],
-                                           olo, ohi, lines[1])
+                if pane != 1:
+                    # An outer-pane deletion of base content is a zero-width
+                    # chunk (lo == hi): it still needs a clickable arrow so it
+                    # can be pushed to base, so mark the boundary line even
+                    # when there is no background to draw.
+                    marker = min(lo, max(0, self.panes[pane].lines() - 1))
+                    self.panes[pane].add_action_marker(marker)
+                    if tag in ("replace", "conflict") and lo < hi and olo < ohi:
+                        self._inline_one_sided(pane, lo, hi, lines[pane],
+                                               olo, ohi, lines[1])
+        # BASE-pane inline: diff the base region against the OUTER pane it
+        # actually differs from. single_changes(1) collapses to `cs[0] or cs[1]`
+        # and loses which outer the other-side indices belong to, so drive this
+        # from all_changes(), which keeps both sides paired.
+        for c0, c1 in self.differ.all_changes():
+            for outer, c in ((0, c0), (2, c1)):
+                if c is None:
+                    continue
+                tag, base_lo, base_hi, o_lo, o_hi = c[0], c[1], c[2], c[3], c[4]
+                if tag in ("replace", "conflict") \
+                        and base_lo < base_hi and o_lo < o_hi:
+                    self._inline_one_sided(1, base_lo, base_hi, lines[1],
+                                           o_lo, o_hi, lines[outer])
+                    break               # mark once per base region (prefer left)
 
     # ----- inline highlighting ----------------------------------------------
 

@@ -116,3 +116,24 @@ def test_paint_does_not_crash(fd3):
     fd3.set_texts(["a\nL\nc\n", "a\nx\nc\n", "a\nR\nc\n"])
     for lm in fd3.linkmaps:
         lm.grab()
+
+
+def test_outer_deletion_is_mergeable_to_base(fd3):
+    # M4: the left pane deletes base's "b". That is a zero-width chunk on the
+    # left (no background), but it must still carry a clickable arrow so the
+    # deletion can be pushed into the base.
+    fd3.set_texts(["a\nc\n", "a\nb\nc\n", "a\nb\nc\n"])
+    markers = [ln for ln in range(3) if fd3.panes[0].has_action_marker(ln)]
+    assert markers, "outer-pane deletion had no merge arrow"
+    fd3.panes[0].action_clicked.emit(markers[0])
+    assert fd3.panes[1].text() == "a\nc\n"          # base took the deletion
+
+
+def test_base_inline_marks_against_correct_outer(fd3):
+    # M5: base inline highlight must diff the base region against the OUTER
+    # pane, not against the base sliced with the outer's indices.
+    fd3.set_texts(["aYc\n", "abc\n", "abc\n"])       # left changes b->Y
+    # the 'b' in the base (col 1) differs from the left's 'Y' -> marked
+    assert fd3.panes[1].has_inline_at(0, 1)
+    assert not fd3.panes[1].has_inline_at(0, 0)      # 'a' unchanged
+    assert not fd3.panes[1].has_inline_at(0, 2)      # 'c' unchanged
