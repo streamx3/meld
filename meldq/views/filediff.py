@@ -13,6 +13,8 @@ Kept separate from the 1.4-era meldq/filediff.py, which remains as reference.
 import difflib
 import hashlib
 import os
+import stat
+import tempfile
 
 from PyQt6.QtCore import QFileSystemWatcher, QPoint, Qt
 from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygon
@@ -247,13 +249,34 @@ class FileDiffView(QWidget):
     def save(self, pane, path=None):
         """Write `pane` back with its original encoding + EOL. The buffer is
         \\n-normalised, so we restore the file's line endings on the way out;
-        the trailing-newline state rides along in the text itself."""
+        the trailing-newline state rides along in the text itself.
+
+        The write is encode-first + atomic: the text is encoded before the
+        target is touched (so an un-encodable character raises without
+        destroying the file), and the bytes go to a sibling temp file that is
+        os.replace()d into place (so a crash mid-write can't leave a truncated
+        file). Any existing file mode is preserved across the replace."""
         path = path or self._paths[pane]
         if path is None:
             raise ValueError("no path to save pane %d" % pane)
         text = self.panes[pane].text().replace("\n", self._eol[pane])
-        with open(path, "wb") as f:
-            f.write(text.encode(self._encoding[pane] or "utf-8"))
+        data = text.encode(self._encoding[pane] or "utf-8")   # may raise; file untouched
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".meldq-save-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            try:
+                os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))
+            except OSError:
+                pass                        # new file, or stat/chmod unsupported
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
         self._paths[pane] = path
         self.panes[pane].setModified(False)
         self._disk_token[pane] = _file_token(path)   # so our write isn't flagged
