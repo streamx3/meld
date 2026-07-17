@@ -357,6 +357,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - M7 — UTF-8 BOM round-trips on save (utf-8-sig), plain UTF-8 never gains one ✅
   - M8 — save refuses blind overwrite of an externally-changed file (Overwrite/Reload) ✅
   - M10 — LinkMap draws a visible band for a change on the last newline-less line ✅
+  - M9 — patch-import reference pane no longer gets a bogus reload prompt ✅
 - ⬜ Phases 2 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

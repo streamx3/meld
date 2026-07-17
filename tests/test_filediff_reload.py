@@ -80,3 +80,21 @@ def test_no_prompt_when_content_unchanged(fd):
     a.write_bytes(a.read_bytes())            # touch without changing content
     fd._on_file_changed_on_disk(str(a))
     assert fd.infobar.message is None
+
+
+def test_import_shared_path_no_bogus_reload_on_reference(qapp, qtbot, tmp_path):
+    # M9: a patch-import view backs both panes with the same path; pane 0 is
+    # the read-only original. Saving pane 1 must not fire a "changed on disk"
+    # prompt on the reference pane (whose Reload would load the patched content
+    # into it, destroying the original-vs-patched comparison).
+    src = tmp_path / "f.txt"
+    src.write_bytes(b"one\ntwo\n")
+    view = FileDiffView(2)
+    qtbot.addWidget(view)
+    view.set_texts(["one\ntwo\n", "one\ntwo\n"], [str(src), str(src)])
+    view.panes[0].setReadOnly(True)
+    view.panes[1].replace_all_text("one\nTWO\n")
+    view.save(1)                                  # write patched, arm watcher
+    view._on_file_changed_on_disk(str(src))       # simulate the watcher firing
+    assert view.infobar.message is None           # no prompt on the reference
+    assert view.panes[0].text() == "one\ntwo\n"   # reference untouched

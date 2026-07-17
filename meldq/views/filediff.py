@@ -226,6 +226,12 @@ class FileDiffView(QWidget):
         for pane, pane_path in enumerate(self._paths):
             if pane_path != path or current is None:
                 continue
+            if self.panes[pane].isReadOnly():
+                continue                    # a reference pane (e.g. the patch-
+                                            # import original) has no edits to
+                                            # lose and must not reload — that
+                                            # would overwrite the reference with
+                                            # the other pane's saved content
             if current == self._disk_token[pane]:
                 continue                    # our own save, or no real change
             self._prompt_reload(pane, path)
