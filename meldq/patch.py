@@ -59,6 +59,7 @@ class FilePatch:
     old_path: str | None = None
     new_path: str | None = None
     hunks: list = field(default_factory=list)
+    binary: bool = False        # "GIT binary patch" / "Binary files ... differ"
 
     @property
     def target_path(self):
@@ -74,6 +75,40 @@ def _strip_op(line):
     return line[1:]
 
 
+def _unquote_git_path(path):
+    """Decode a git-quoted path (core.quotePath): '"f\\303\\274ile.txt"' ->
+    'füile.txt'. Unquoted paths pass through unchanged."""
+    if not (path and len(path) >= 2 and path[0] == '"' and path[-1] == '"'):
+        return path
+    inner = path[1:-1]
+    try:
+        # unicode_escape resolves \t \" \\ and the octal byte escapes; the
+        # resulting chars are the raw bytes, which are UTF-8 of the real name.
+        raw = inner.encode("ascii").decode("unicode_escape").encode("latin-1")
+        return raw.decode("utf-8", "replace")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return inner
+
+
+_GIT_DIFF_PATHS = re.compile(
+    r'^("(?:[^"\\]|\\.)*"|\S+) ("(?:[^"\\]|\\.)*"|\S+)$')
+
+
+def _parse_git_diff_line(line):
+    """The two paths from a 'diff --git a/x b/y' line (quoted or plain), or
+    (None, None) if they cannot be recovered."""
+    rest = line[len("diff --git "):].rstrip()
+    m = _GIT_DIFF_PATHS.match(rest)
+    if m:
+        return _unquote_git_path(m.group(1)), _unquote_git_path(m.group(2))
+    # Unquoted names containing spaces are ambiguous; git separates them with
+    # ' b/', so split at its last occurrence.
+    idx = rest.rfind(" b/")
+    if idx > 0:
+        return rest[:idx], rest[idx + 1:]
+    return None, None
+
+
 def parse_patch(text):
     """Parse unified-diff text into a list of :class:`FilePatch`.
 
@@ -83,11 +118,40 @@ def parse_patch(text):
     lines = text.splitlines(keepends=True)
     files = []
     current = None
+    expect_headers = False      # a `diff --git` opened an entry; ---/+++ refine it
     i = 0
     n = len(lines)
     while i < n:
         raw = lines[i]
         line = raw.rstrip("\r\n")
+
+        # Git extended headers: `diff --git` opens the entry (a pure rename or
+        # binary change has no ---/+++ lines at all), rename lines carry the
+        # authoritative names, binary markers flag content we cannot apply.
+        if line.startswith("diff --git "):
+            a_path, b_path = _parse_git_diff_line(line)
+            current = FilePatch(old_path=a_path, new_path=b_path)
+            files.append(current)
+            expect_headers = True
+            i += 1
+            continue
+
+        if line.startswith("rename from ") and current is not None:
+            current.old_path = _unquote_git_path(line[len("rename from "):])
+            i += 1
+            continue
+
+        if line.startswith("rename to ") and current is not None:
+            current.new_path = _unquote_git_path(line[len("rename to "):])
+            i += 1
+            continue
+
+        if (line == "GIT binary patch" or line.startswith("Binary files ")) \
+                and current is not None:
+            current.binary = True
+            expect_headers = False      # entry complete; a later --- is a new file
+            i += 1
+            continue
 
         # File headers. Only reachable *between* hunks — hunk bodies are consumed
         # in the inner loop below, so a removed line like "--- x" never lands here.
@@ -100,8 +164,13 @@ def parse_patch(text):
             if target is not None and _CONTEXT_RANGE.match(target):
                 raise PatchError(
                     "context-format (non-unified) diffs are not supported")
-            current = FilePatch(old_path=target)
-            files.append(current)
+            target = _unquote_git_path(target)
+            if expect_headers and current is not None and not current.hunks:
+                if target is not None:
+                    current.old_path = target
+            else:
+                current = FilePatch(old_path=target)
+                files.append(current)
             i += 1
             continue
 
@@ -110,7 +179,7 @@ def parse_patch(text):
             if current is None:
                 current = FilePatch()
                 files.append(current)
-            current.new_path = m.group(1) if m else None
+            current.new_path = _unquote_git_path(m.group(1) if m else None)
             i += 1
             continue
 
@@ -119,6 +188,7 @@ def parse_patch(text):
             if current is None:                 # a bare hunk with no file header
                 current = FilePatch()
                 files.append(current)
+            expect_headers = False
             src_start = int(m.group(1))
             src_len = int(m.group(2)) if m.group(2) is not None else 1
             tgt_start = int(m.group(3))

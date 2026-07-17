@@ -207,3 +207,73 @@ def test_export_nested_path_headers(qapp, qtbot, tmp_path):
     # ...and it applies from either root via the importer.
     target, = patch_targets(str(tmp_path / "r1"), patch)
     assert target.patched == "ONE\n"
+
+
+# ---------------------------------------------------------------------------
+# P4+P7+P10: renames, git-quoted paths, binary entries
+# ---------------------------------------------------------------------------
+
+def test_rename_with_edit(tmp_path):
+    (tmp_path / "old.txt").write_text("one\ntwo\n")
+    patch = ("diff --git a/old.txt b/new.txt\n"
+             "similarity index 90%\n"
+             "rename from old.txt\n"
+             "rename to new.txt\n"
+             "--- a/old.txt\n+++ b/new.txt\n"
+             "@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n")
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.path.endswith("new.txt")      # write destination = new name
+    assert target.original == "one\ntwo\n"      # source read from the OLD name
+    assert target.patched == "one\nTWO\n"
+
+
+def test_pure_rename_not_dropped(tmp_path):
+    (tmp_path / "old.txt").write_text("content\n")
+    patch = ("diff --git a/old.txt b/new.txt\n"
+             "similarity index 100%\n"
+             "rename from old.txt\n"
+             "rename to new.txt\n")
+    target, = patch_targets(str(tmp_path), patch)   # used to return []
+    assert target.path.endswith("new.txt")
+    assert target.original == target.patched == "content\n"
+
+
+def test_git_quoted_nonascii_path(tmp_path):
+    (tmp_path / "füile.txt").write_text("one\n")
+    patch = ('--- "a/f\\303\\274ile.txt"\n+++ "b/f\\303\\274ile.txt"\n'
+             "@@ -1,1 +1,2 @@\n one\n+two\n")
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.path.endswith("füile.txt")
+    assert target.patched == "one\ntwo\n"
+
+
+def test_binary_entry_reported_not_dropped(tmp_path):
+    from meldq.patchimport import patch_targets_and_skipped
+    (tmp_path / "t.txt").write_text("a\n")
+    patch = ("diff --git a/blob.bin b/blob.bin\n"
+             "index 1111111..2222222 100644\n"
+             "GIT binary patch\n"
+             "literal 4\nLcmZQzWo\n\n"
+             "--- a/t.txt\n+++ b/t.txt\n@@ -1,1 +1,1 @@\n-a\n+A\n")
+    targets, skipped = patch_targets_and_skipped(str(tmp_path), patch)
+    assert skipped == ["blob.bin"]
+    assert len(targets) == 1                    # the text part still imports
+    assert targets[0].patched == "A\n"
+
+
+def test_mode_change_only_entry_ignored(tmp_path):
+    (tmp_path / "t.txt").write_text("a\n")
+    patch = ("diff --git a/script.sh b/script.sh\n"
+             "old mode 100644\nnew mode 100755\n"
+             "--- a/t.txt\n+++ b/t.txt\n@@ -1,1 +1,1 @@\n-a\n+A\n")
+    targets = patch_targets(str(tmp_path), patch)
+    assert [t.path.split("/")[-1] for t in targets] == ["t.txt"]
+
+
+def test_delete_patch_flagged(tmp_path):
+    (tmp_path / "gone.txt").write_text("one\ntwo\n")
+    patch = ("--- a/gone.txt\n+++ /dev/null\n"
+             "@@ -1,2 +0,0 @@\n-one\n-two\n")
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.is_delete
+    assert target.patched == ""

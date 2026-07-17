@@ -20,19 +20,30 @@ from meldq.patch import apply_patch, parse_patch
 # round-trip (decode -> encode with the same codec) is byte-preserving.
 _CODECS = ("utf-8", "latin-1")
 
-# path      : resolved source path under base_dir
+# path      : resolved target path under base_dir (the new name for a rename)
 # original  : source text (decoded), "" if the source is absent (a new file)
 # patched   : text after applying the file's hunks to `original`
 # encoding  : codec `original` was decoded with (use it to write back)
 # eol       : the source's dominant line ending ("\n"/"\r\n"/"\r")
+# is_delete : the patch deletes this file (+++ /dev/null)
 PatchTarget = namedtuple(
-    "PatchTarget", "path original patched encoding eol")
+    "PatchTarget", "path original patched encoding eol is_delete",
+    defaults=(False,))
+
+
+def _strip_prefix(path):
+    """A header path as a relative path: strip the a/ b/ prefix; None for an
+    absent side (None or /dev/null)."""
+    if not path or path == "/dev/null":
+        return None
+    return path[2:] if path[:2] in ("a/", "b/") else path
 
 
 def _relpath(file_patch):
     for candidate in (file_patch.new_path, file_patch.old_path):
-        if candidate and candidate != "/dev/null":
-            return candidate[2:] if candidate[:2] in ("a/", "b/") else candidate
+        rel = _strip_prefix(candidate)
+        if rel:
+            return rel
     return ""
 
 
@@ -69,23 +80,49 @@ def read_patch_text(path):
 
 
 def patch_targets(base_dir, patch_text):
-    """[PatchTarget] for each file named in the patch.
+    """[PatchTarget] for each text file named in the patch.
 
-    A missing source yields original "" (a newly-added file). A PatchError from
-    the apply layer (context mismatch) propagates to the caller.
+    A missing source yields original "" (a newly-added file). For a rename the
+    source is read from the OLD name and the target path is the new name. A
+    binary entry yields no target (returned separately — see
+    patch_targets_and_skipped). A PatchError from the parse/apply layer
+    propagates to the caller.
     """
+    return patch_targets_and_skipped(base_dir, patch_text)[0]
+
+
+def patch_targets_and_skipped(base_dir, patch_text):
+    """(targets, skipped): the applyable text targets plus the names of binary
+    entries meldq cannot apply (so callers can tell the user instead of
+    silently dropping them)."""
     targets = []
+    skipped = []
     for file_patch in parse_patch(patch_text):
         rel = _relpath(file_patch)
+        if file_patch.binary:
+            skipped.append(rel or "?")
+            continue
+        old_rel = _strip_prefix(file_patch.old_path)
+        is_rename = bool(old_rel and rel and old_rel != rel)
+        if not file_patch.hunks and not is_rename:
+            continue          # header-only noise (e.g. a mode-change entry)
         path = os.path.join(base_dir, rel)
-        if os.path.isfile(path):
-            original, encoding = _read_source(path)
+        src_path = path
+        if not os.path.isfile(path) and is_rename:
+            # Rename: the content lives under the old name pre-apply.
+            candidate = os.path.join(base_dir, old_rel)
+            if os.path.isfile(candidate):
+                src_path = candidate
+        if os.path.isfile(src_path):
+            original, encoding = _read_source(src_path)
         else:
             original, encoding = "", "utf-8"
         patched = apply_patch(original, file_patch)
+        is_delete = file_patch.new_path == "/dev/null"
         targets.append(
-            PatchTarget(path, original, patched, encoding, _detect_eol(original)))
-    return targets
+            PatchTarget(path, original, patched, encoding,
+                        _detect_eol(original), is_delete))
+    return targets, skipped
 
 
 def open_in_filediffs(base_dir, patch_text, parent=None):

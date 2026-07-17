@@ -505,10 +505,14 @@ class MeldWindow(QMainWindow):
         """Open one FileDiff tab per file in the patch (source on the left,
         patched on the right). Dialog-free core, so it is directly testable.
         A malformed hunk raises meldq.patch.PatchError to the caller."""
-        from meldq.patchimport import patch_targets
+        from meldq.patchimport import patch_targets_and_skipped
 
+        targets, skipped = patch_targets_and_skipped(base_dir, patch_text)
+        if skipped:
+            self._warn(_("Binary changes are not supported and were "
+                         "skipped: %s") % ", ".join(skipped))
         views = []
-        for target in patch_targets(base_dir, patch_text):
+        for target in targets:
             view = FileDiffView(2)
             # Load the untouched source into BOTH panes, then apply the patch to
             # the right pane as a recorded edit. That leaves the right pane
@@ -527,9 +531,17 @@ class MeldWindow(QMainWindow):
             view.panes[0].setReadOnly(True)
             if target.patched != target.original:
                 view.panes[1].replace_all_text(target.patched)
+            if target.is_delete:
+                # Saving writes an empty file; actual deletion is manual — be
+                # explicit rather than silently diverging from patch semantics.
+                view.infobar.show_message(
+                    _('This patch deletes "%s". Saving writes an empty file; '
+                      'delete it manually to complete the removal.')
+                    % os.path.basename(target.path))
             view.set_theme(self._theme_obj())
             self._apply_font_to(view)
-            self._add_tab(view, _("patch: %s") % os.path.basename(target.path),
+            title = _("patch (delete): %s") if target.is_delete else _("patch: %s")
+            self._add_tab(view, title % os.path.basename(target.path),
                           "text-x-generic")
             views.append(view)
         return views
