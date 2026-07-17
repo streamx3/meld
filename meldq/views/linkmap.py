@@ -31,6 +31,21 @@ class LinkMap(QWidget):
         self._theme_fn = theme_fn
         self.setFixedWidth(self.WIDTH)
 
+    @staticmethod
+    def _band_y(view, lo, hi):
+        """(top, bottom) widget-y for a chunk spanning lines [lo, hi). A
+        zero-width side is a single y (the band tapers to a point). A chunk that
+        ends past the last line — a change on the final line of a file with no
+        trailing newline — extends to the bottom of that line instead of
+        collapsing to zero height (y_for_line clamps a past-end line to the top
+        of the last one)."""
+        top = view.y_for_line(lo)
+        if lo == hi:
+            return top, top
+        if hi < view.lines():
+            return top, view.y_for_line(hi)
+        return top, view.y_for_line(view.lines() - 1) + view.line_height()
+
     def chunk_shapes(self):
         """(tag, l_top, l_bottom, r_top, r_bottom) per chunk, in widget y-coords.
 
@@ -38,11 +53,9 @@ class LinkMap(QWidget):
         """
         shapes = []
         for tag, l_lo, l_hi, r_lo, r_hi in self._chunks_fn():
-            shapes.append((
-                tag,
-                self._left.y_for_line(l_lo), self._left.y_for_line(l_hi),
-                self._right.y_for_line(r_lo), self._right.y_for_line(r_hi),
-            ))
+            l_top, l_bot = self._band_y(self._left, l_lo, l_hi)
+            r_top, r_bot = self._band_y(self._right, r_lo, r_hi)
+            shapes.append((tag, l_top, l_bot, r_top, r_bot))
         return shapes
 
     def paintEvent(self, event):

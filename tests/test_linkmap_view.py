@@ -57,3 +57,14 @@ def test_shapes_update_after_merge(fd):
 def test_paint_does_not_crash(fd):
     fd.set_texts(["a\nOLD\nb\n", "a\nNEW\nb\n"])
     fd.linkmaps[0].grab()               # forces a real paintEvent
+
+
+def test_last_line_change_without_newline_has_visible_band(fd):
+    # M10: a change confined to the final line of a no-trailing-newline file
+    # ended at hi == line count; y_for_line clamped it, giving a zero-height
+    # (invisible) band. It must now have real height.
+    fd.set_texts(["a\nb\nlast_L", "a\nb\nlast_R"])   # no trailing newline
+    shapes = fd.linkmaps[0].chunk_shapes()
+    assert len(shapes) == 1
+    tag, l_top, l_bot, r_top, r_bot = shapes[0]
+    assert l_bot > l_top and r_bot > r_top           # visible, not zero-height
