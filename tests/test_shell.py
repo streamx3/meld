@@ -322,6 +322,30 @@ def test_import_patch_saves_back_with_source_encoding(window, tmp_path):
     assert src.read_bytes() == "caf\xe9\nLINE2\n".encode("latin-1")
 
 
+def test_import_patch_on_save_writes_patched_result(window, tmp_path):
+    # C4: accept the whole patch, then File>Save. The patched pane must be
+    # marked modified so on_save() actually writes it (it used to be a no-op).
+    src = tmp_path / "a.txt"
+    _write(src, "one\ntwo\nthree\n")
+    view = window.import_patch(str(tmp_path), PATCH)[0]
+    assert view.is_modified(1)                 # patched pane flagged for save
+    assert view.any_modified()
+    window.tabs.setCurrentWidget(view)
+    window.on_save()
+    assert src.read_text() == "one\nTWO\nthree\n"
+    assert not view.is_modified(1)
+
+
+def test_import_patch_noop_is_not_modified(window, tmp_path):
+    # A patch whose result equals the source leaves nothing to save.
+    src = tmp_path / "a.txt"
+    _write(src, "one\ntwo\n")
+    noop = "--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+one\n"
+    view = window.import_patch(str(tmp_path), noop)[0]
+    assert view.panes[1].text() == "one\ntwo\n"
+    assert not view.is_modified(1)
+
+
 def test_custom_font_pref_applies_to_editors(window, two_files):
     from PyQt6.QtGui import QFont
     view = window.append_filediff(list(two_files))

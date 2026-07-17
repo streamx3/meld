@@ -510,7 +510,12 @@ class MeldWindow(QMainWindow):
         views = []
         for target in patch_targets(base_dir, patch_text):
             view = FileDiffView(2)
-            view.set_texts([target.original, target.patched],
+            # Load the untouched source into BOTH panes, then apply the patch to
+            # the right pane as a recorded edit. That leaves the right pane
+            # genuinely modified (QScintilla's isModified is save-point-relative,
+            # so setModified(True) is a no-op) — so File>Save writes it and the
+            # unsaved-close prompt fires — and makes the patch undoable.
+            view.set_texts([target.original, target.original],
                            [target.path, target.path])
             # Preserve the source's encoding/EOL so accepting + saving writes
             # the file back losslessly (no UTF-8 clobber of a latin-1 source).
@@ -520,6 +525,8 @@ class MeldWindow(QMainWindow):
             # patched result the user reviews. Only the right pane is saveable,
             # so Save can never write the original back over the same path.
             view.panes[0].setReadOnly(True)
+            if target.patched != target.original:
+                view.panes[1].replace_all_text(target.patched)
             view.set_theme(self._theme_obj())
             self._apply_font_to(view)
             self._add_tab(view, _("patch: %s") % os.path.basename(target.path),
