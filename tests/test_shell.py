@@ -250,6 +250,23 @@ def test_save_writes_modified_pane(window, two_files):
     assert not view.is_modified(1)
 
 
+def test_dirdiff_activate_one_sided_file_opens_tab(window, tmp_path):
+    # D1 end-to-end: activating a file present on only one side opens a
+    # FileDiff tab (against an empty pane), not a rejected soft-warning.
+    left, right = tmp_path / "l", tmp_path / "r"
+    (left).mkdir()
+    (right).mkdir()
+    (left / "only.txt").write_text("hello\n")
+    view = window.append_dirdiff([str(left), str(right)])
+    from tests.test_dirdiff_view import top_rows
+    before = window.tabs.count()
+    view.on_activated(top_rows(view)["only.txt"])
+    assert window.tabs.count() == before + 1
+    fd = window.tabs.currentWidget()
+    assert fd.panes[0].text() == "hello\n"
+    assert fd.panes[1].text() == ""             # missing side -> empty pane
+
+
 def test_close_tab_kept_open_when_save_fails(window, two_files, monkeypatch):
     # S1: choosing Save on close must NOT destroy the tab if the save fails.
     a, b = two_files

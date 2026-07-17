@@ -124,6 +124,9 @@ def test_activate_file_emits_create_diff(dd, tmp_path):
 
 
 def test_activate_file_only_one_side(dd, tmp_path):
+    # D1: a file present on only one side opens a comparison against the (empty,
+    # creatable) other pane — it used to emit a 1-element list the shell then
+    # rejected, so activating a new/deleted file did nothing.
     left, right = tmp_path / "left", tmp_path / "right"
     write(left / "onlyleft.txt", b"a\n")
     right.mkdir()
@@ -131,7 +134,9 @@ def test_activate_file_only_one_side(dd, tmp_path):
     got = []
     dd.create_diff.connect(got.append)
     dd.on_activated(top_rows(dd)["onlyleft.txt"])
-    assert got == [[str(left / "onlyleft.txt")]]     # only the existing file
+    assert len(got) == 1
+    assert got[0] == [str(left / "onlyleft.txt"),
+                      str(right / "onlyleft.txt")]  # both panes, right missing
 
 
 def test_activate_dir_toggles_expand(dd, tmp_path):

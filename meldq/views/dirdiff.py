@@ -282,9 +282,11 @@ class DirDiffView(QWidget):
             col0 = index.siblingAtColumn(0)
             self.tree.setExpanded(col0, not self.tree.isExpanded(col0))
             return
-        existing = [p for p in paths if os.path.isfile(p)]
-        if existing:
-            self.create_diff.emit(existing)
+        # Emit ALL pane paths (not just the existing ones) so a file present on
+        # only one side opens a comparison against an empty, creatable pane —
+        # the most useful rows in a directory diff are the new/deleted ones.
+        if any(os.path.isfile(p) for p in paths):
+            self.create_diff.emit(paths)
 
     def copy_to(self, index, src_pane, dst_pane):
         """Copy the row's file/dir from src_pane to dst_pane (same relpath)."""
