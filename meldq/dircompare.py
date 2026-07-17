@@ -115,9 +115,18 @@ def walk(roots, name_filters=(), regexes=()):
     if all return True); `regexes` are compiled text filters for content
     comparison."""
     todo = [""]                             # relpaths of directories to expand
+    visited = set()                         # real paths already expanded
     while todo:
         rel = todo.pop(0)
         dir_paths = [os.path.join(r, rel) if rel else r for r in roots]
+        # Cycle guard: a directory symlink pointing at an ancestor would make
+        # the walk descend through it forever. Key each expansion by the real
+        # paths of its panes and skip one we've already expanded.
+        key = tuple(sorted(os.path.realpath(dp)
+                           for dp in dir_paths if os.path.isdir(dp)))
+        if key in visited:
+            continue
+        visited.add(key)
         names = set()
         for dp in dir_paths:
             if os.path.isdir(dp):

@@ -160,3 +160,26 @@ def test_walk_three_way(tmp_path):
     entry = next(e for e in walk([str(a), str(b), str(c)]) if e.name == "f.txt")
     assert entry.states == [STATE_MODIFIED] * 3
     assert entry.different is True
+
+
+# ---------------------------------------------------------------------------
+# D4: directory symlink cycles terminate instead of exploding
+# ---------------------------------------------------------------------------
+
+def test_walk_symlink_cycle_terminates(tmp_path):
+    import os
+    left, right = tmp_path / "l", tmp_path / "r"
+    (left / "sub").mkdir(parents=True)
+    (right / "sub").mkdir(parents=True)
+    (left / "sub" / "a.txt").write_bytes(b"1\n")
+    (right / "sub" / "a.txt").write_bytes(b"1\n")
+    # a loop: sub/back points at its own parent tree
+    os.symlink(left, left / "sub" / "back")
+    os.symlink(right, right / "sub" / "back")
+    entries = list(walk([str(left), str(right)]))     # must not hang/explode
+    rels = [e.relpath for e in entries]
+    # the loop link appears once as an entry, but is not descended into forever
+    assert any(r.endswith("back") for r in rels)
+    assert len(entries) < 50
+    # every relpath is unique (no phantom replicated subtrees)
+    assert len(rels) == len(set(rels))
