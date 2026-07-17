@@ -298,20 +298,39 @@ class FileDiffView(QWidget):
         if path not in self._watcher.files():
             self._watcher.addPath(path)
 
+    @staticmethod
+    def _patch_labels(path_a, path_b):
+        """Header labels for an exported diff. Comparing the same relative file
+        under two different roots (the DirDiff/VC case) yields that shared
+        relative path — so the patch applies at either root with -p1 — else the
+        basename (unrelated files have no meaningful common path)."""
+        pa = os.path.normpath(os.path.abspath(path_a)).split(os.sep)
+        pb = os.path.normpath(os.path.abspath(path_b)).split(os.sep)
+        i = 0
+        while i < min(len(pa), len(pb)) and pa[i] == pb[i]:
+            i += 1
+        ra, rb = pa[i:], pb[i:]
+        if len(ra) > 1 and len(rb) > 1 and ra[1:] == rb[1:]:
+            rel = "/".join(ra[1:])
+            return rel, rel
+        return os.path.basename(path_a), os.path.basename(path_b)
+
     def make_patch(self, left_pane=0, right_pane=1, reverse=False):
         """A unified diff between two panes (export). `reverse` swaps old/new;
         for a 3-way view pass the pair to compare. Round-trips with
-        meldq.patchimport."""
-        a = self.panes[left_pane].text().splitlines(keepends=True)
-        b = self.panes[right_pane].text().splitlines(keepends=True)
-        la = self._paths[left_pane] or "a"
-        lb = self._paths[right_pane] or "b"
+        meldq.patchimport. Each side's original line endings are restored (the
+        buffer is \\n-normalised), so a patch of a CRLF file applies to it."""
+        a = self.panes[left_pane].text().replace(
+            "\n", self._eol[left_pane]).splitlines(keepends=True)
+        b = self.panes[right_pane].text().replace(
+            "\n", self._eol[right_pane]).splitlines(keepends=True)
+        la, lb = self._patch_labels(self._paths[left_pane] or "a",
+                                    self._paths[right_pane] or "b")
         if reverse:
             a, b, la, lb = b, a, lb, la
         lines = []
         for line in difflib.unified_diff(
-                a, b, fromfile="a/" + os.path.basename(la),
-                tofile="b/" + os.path.basename(lb)):
+                a, b, fromfile="a/" + la, tofile="b/" + lb):
             # A body line with no trailing newline means the file's final line
             # lacks one; emit the standard marker so external patch/git apply
             # accept it (meldq's own importer tolerates either form).

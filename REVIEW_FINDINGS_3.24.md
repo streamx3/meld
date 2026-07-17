@@ -345,6 +345,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - C3 — slot-exception safety net + I/O guards + PatchDialog lifetime (`c1865b34`)
 - 🟡 **Phase 1 — in progress:**
   - P1 — patch files read as bytes (CRLF/latin-1 patches import) ✅
+  - P2+P3 — export restores per-pane EOL + shared-relative-path headers ✅
 - ⬜ Phases 2–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

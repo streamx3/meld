@@ -166,3 +166,44 @@ def test_read_patch_text_latin1_fallback(tmp_path):
     target, = patch_targets(str(tmp_path), text)
     assert target.patched == "caf\xe9\nline2\n"
     assert target.encoding == "latin-1"
+
+
+# ---------------------------------------------------------------------------
+# P2+P3: export restores line endings and uses shared-relative-path headers
+# ---------------------------------------------------------------------------
+
+def test_export_crlf_file_roundtrips(qapp, qtbot, tmp_path):
+    # A patch exported from a CRLF file must carry \r\n so it applies to that
+    # file (the buffer is \n-normalised; the old export emitted LF-only).
+    from meldq.views.filediff import FileDiffView
+    src = tmp_path / "f.txt"
+    src.write_bytes(b"one\r\ntwo\r\n")
+    fd = FileDiffView(2)
+    qtbot.addWidget(fd)
+    fd.set_files([str(src), str(src)])
+    fd.panes[1].set_text("one\nTWO\n")
+    patch = fd.make_patch()
+    assert "-two\r\n" in patch and "+TWO\r\n" in patch
+    target, = patch_targets(str(tmp_path), patch)
+    assert target.patched == "one\r\nTWO\r\n"
+
+
+def test_export_nested_path_headers(qapp, qtbot, tmp_path):
+    # Same relative file under two roots (the DirDiff case) -> headers carry
+    # the shared relative path, not just the basename.
+    from meldq.views.filediff import FileDiffView
+    for root in ("r1", "r2"):
+        (tmp_path / root / "sub").mkdir(parents=True)
+    a = tmp_path / "r1" / "sub" / "nested.txt"
+    b = tmp_path / "r2" / "sub" / "nested.txt"
+    a.write_text("one\n")
+    b.write_text("ONE\n")
+    fd = FileDiffView(2)
+    qtbot.addWidget(fd)
+    fd.set_files([str(a), str(b)])
+    patch = fd.make_patch()
+    assert "--- a/sub/nested.txt" in patch
+    assert "+++ b/sub/nested.txt" in patch
+    # ...and it applies from either root via the importer.
+    target, = patch_targets(str(tmp_path / "r1"), patch)
+    assert target.patched == "ONE\n"
