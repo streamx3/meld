@@ -656,7 +656,8 @@ class MeldWindow(QMainWindow):
             if response == QMessageBox.StandardButton.Cancel:
                 return
             if response == QMessageBox.StandardButton.Save:
-                self._save_all_panes(widget)
+                if not self._save_all_panes(widget):
+                    return          # save failed/incomplete -> keep the tab
         self.tabs.removeTab(index)
         widget.deleteLater()
 
@@ -668,9 +669,17 @@ class MeldWindow(QMainWindow):
             | QMessageBox.StandardButton.Cancel)
 
     def _save_all_panes(self, view):
+        """Save every modified pane. Returns True only if nothing remained
+        unsaved — every write succeeded and no modified pane lacked a path — so
+        the caller can refuse to close a tab whose Save failed."""
+        ok = True
         for pane in range(view.num_panes):
-            if view.is_modified(pane) and view.path(pane):
-                self._save_pane(view, pane)
+            if view.is_modified(pane):
+                if not view.path(pane):
+                    ok = False              # would need Save-As; not saved
+                elif not self._save_pane(view, pane):
+                    ok = False              # write failed or overwrite-refused
+        return ok
 
     # ----- prefs / geometry -------------------------------------------------
 
@@ -718,7 +727,9 @@ class MeldWindow(QMainWindow):
                     event.ignore()
                     return
                 if response == QMessageBox.StandardButton.Save:
-                    self._save_all_panes(widget)
+                    if not self._save_all_panes(widget):
+                        event.ignore()      # save failed -> don't lose edits
+                        return
         if self._geometry_timer.isActive():
             self._geometry_timer.stop()
         self._save_geometry()

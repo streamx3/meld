@@ -250,6 +250,36 @@ def test_save_writes_modified_pane(window, two_files):
     assert not view.is_modified(1)
 
 
+def test_close_tab_kept_open_when_save_fails(window, two_files, monkeypatch):
+    # S1: choosing Save on close must NOT destroy the tab if the save fails.
+    a, b = two_files
+    view = window.append_filediff([a, b])
+    view.panes[0].set_text("edited\n")
+    assert view.is_modified(0)
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(view, "save", boom)
+    monkeypatch.setattr(window, "_prompt_unsaved",
+                        lambda v: QMessageBox.StandardButton.Save)
+    idx = window.tabs.indexOf(view)
+    before = window.tabs.count()
+    window._on_tab_close_requested(idx)
+    assert window.tabs.count() == before          # tab still open
+    assert window.tabs.indexOf(view) >= 0
+
+
+def test_close_tab_proceeds_when_save_succeeds(window, two_files, monkeypatch):
+    a, b = two_files
+    view = window.append_filediff([a, b])
+    view.panes[0].set_text("edited\n")
+    monkeypatch.setattr(window, "_prompt_unsaved",
+                        lambda v: QMessageBox.StandardButton.Save)
+    before = window.tabs.count()
+    window._on_tab_close_requested(window.tabs.indexOf(view))
+    assert window.tabs.count() == before - 1      # saved cleanly, tab closed
+
+
 def test_edit_undo_reverts_a_merge(window, two_files):
     # M3: Edit>Undo (Ctrl+Z) routes through the view so it undoes the merge,
     # which edited the pane that does not hold focus.

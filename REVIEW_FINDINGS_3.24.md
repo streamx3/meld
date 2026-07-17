@@ -365,7 +365,9 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
     overwrite the read-only original; the right fix is a patch-review
     "reject hunk" control that edits the patched pane instead. Tracked for a
     later feature pass.
-- ⬜ Phases 2 (rest)–7 — pending.
+- 🟡 **Phase 3 — in progress:**
+  - S1 — close/quit keeps the tab open when a chosen Save fails ✅
+- ⬜ Phases 3 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will
