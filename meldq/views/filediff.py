@@ -523,6 +523,12 @@ class FileDiffView(QWidget):
     def _on_action(self, pane, line):
         # Merge arrow clicked. 2-way: send that pane's side to the other pane.
         # 3-way: an outer pane sends its side into the base (pane 1).
+        # The action margin is sensitive along its whole height, but only lines
+        # that actually carry an arrow are merge points; without this guard a
+        # click on the empty margin matches a zero-width chunk and silently
+        # performs a destructive merge (deletes the other pane's added lines).
+        if not self.panes[pane].has_action_marker(line):
+            return
         if self.num_panes == 2:
             chunk = self.chunk_at_line(pane, line)
             if chunk is not None:

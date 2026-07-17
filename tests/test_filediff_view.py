@@ -295,6 +295,23 @@ def test_action_markers_cleared_after_merge(fd):
     assert not fd.panes[1].has_action_marker(1)
 
 
+def test_click_empty_margin_is_noop(fd):
+    # M2: an insert chunk draws an arrow only on the right (zero-width on left).
+    # Clicking the LEFT margin at that line (no arrow) must NOT merge — it used
+    # to match the zero-width chunk and delete the right pane's added lines.
+    fd.set_texts(["a\nb\n", "a\nX\nY\nb\n"])
+    assert not fd.panes[0].has_action_marker(1)
+    fd.panes[0].action_clicked.emit(1)              # click the empty left margin
+    assert fd.panes[1].text() == "a\nX\nY\nb\n"     # right pane untouched
+
+
+def test_click_empty_margin_unchanged_line_is_noop(fd):
+    fd.set_texts(["a\nOLD\nb\n", "a\nNEW\nb\n"])
+    before = (fd.panes[0].text(), fd.panes[1].text())
+    fd.panes[0].action_clicked.emit(0)              # an unchanged line
+    assert (fd.panes[0].text(), fd.panes[1].text()) == before
+
+
 # ----- M2: next/previous change navigation ----------------------------------
 
 def test_next_diff_walks_chunks(fd):
