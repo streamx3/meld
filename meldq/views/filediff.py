@@ -76,16 +76,24 @@ def _file_token(path):
 def load_file(path, codecs=("utf-8",)):
     """Read `path`, returning (text, encoding, eol). Tries `codecs` then falls
     back to latin-1 (which decodes any byte), so loading never fails; the
-    encoding + EOL are remembered for a faithful write-back on save."""
+    encoding + EOL are remembered for a faithful write-back on save.
+
+    A UTF-8 BOM is detected explicitly and decoded as utf-8-sig (the BOM is
+    stripped from the text but remembered in the encoding), so a save re-adds
+    it — and, crucially, a plain BOM-less UTF-8 file is never mis-encoded to
+    gain one."""
     with open(path, "rb") as f:
         raw = f.read()
     text = encoding = None
-    for candidate in (*codecs, "latin-1"):
-        try:
-            text, encoding = raw.decode(candidate), candidate
-            break
-        except (UnicodeDecodeError, LookupError):
-            continue
+    if raw.startswith(b"\xef\xbb\xbf"):
+        text, encoding = raw.decode("utf-8-sig"), "utf-8-sig"
+    else:
+        for candidate in (*codecs, "latin-1"):
+            try:
+                text, encoding = raw.decode(candidate), candidate
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
     if text is None:
         text, encoding = raw.decode("utf-8", errors="replace"), "utf-8"
     eol = "\r\n" if "\r\n" in text else ("\r" if "\r" in text else "\n")

@@ -64,3 +64,25 @@ def test_save_leaves_no_temp_files(fd, tmp_path):
                  if p.name.startswith(".meldq-save-")]
     assert leftovers == []
     assert src.read_bytes() == b"one\ntwo\n"
+
+
+def test_bom_preserved_on_save(fd, tmp_path):
+    # M7: a UTF-8 BOM must survive an edit+save (was silently dropped).
+    p = tmp_path / "bom.txt"
+    p.write_bytes(b"\xef\xbb\xbfhello\nworld\n")
+    fd.set_files([str(p), str(p)])
+    assert fd._encoding[0] == "utf-8-sig"
+    assert not fd.panes[0].text().startswith("﻿")   # BOM not in the buffer
+    fd.panes[0].set_text(fd.panes[0].text() + "x\n")
+    fd.save(0)
+    assert p.read_bytes().startswith(b"\xef\xbb\xbf")     # BOM restored
+
+
+def test_plain_utf8_does_not_gain_a_bom(fd, tmp_path):
+    p = tmp_path / "plain.txt"
+    p.write_bytes(b"hello\nworld\n")
+    fd.set_files([str(p), str(p)])
+    assert fd._encoding[0] == "utf-8"
+    fd.panes[0].set_text("HELLO\n")
+    fd.save(0)
+    assert p.read_bytes() == b"HELLO\n"                   # no BOM added
