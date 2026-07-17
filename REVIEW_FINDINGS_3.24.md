@@ -346,6 +346,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
 - 🟡 **Phase 1 — in progress:**
   - P1 — patch files read as bytes (CRLF/latin-1 patches import) ✅
   - P2+P3 — export restores per-pane EOL + shared-relative-path headers ✅
+  - P6+P8+P9+P12 — strict parse: truncated/malformed/context-format raise; mangled blank context applies ✅
 - ⬜ Phases 2–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

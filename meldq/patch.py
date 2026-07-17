@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _OLD_HDR = re.compile(r"^--- (.*?)(?:\t.*)?$")
 _NEW_HDR = re.compile(r"^\+\+\+ (.*?)(?:\t.*)?$")
+_CONTEXT_RANGE = re.compile(r"^\d+(,\d+)? ----$")   # context-format hunk range
 
 
 class PatchError(Exception):
@@ -92,7 +93,14 @@ def parse_patch(text):
         # in the inner loop below, so a removed line like "--- x" never lands here.
         if line.startswith("--- "):
             m = _OLD_HDR.match(line)
-            current = FilePatch(old_path=m.group(1) if m else None)
+            target = m.group(1) if m else None
+            # In a context-format diff every hunk has a "--- N,M ----" range
+            # line, which would otherwise mis-parse as a unified file header
+            # and yield garbage no-op targets. Fail loudly instead.
+            if target is not None and _CONTEXT_RANGE.match(target):
+                raise PatchError(
+                    "context-format (non-unified) diffs are not supported")
+            current = FilePatch(old_path=target)
             files.append(current)
             i += 1
             continue
@@ -135,15 +143,34 @@ def parse_patch(text):
                 elif op == "+":
                     hunk.lines.append(("+", _strip_op(body)))
                     new_seen += 1
-                elif op == " " or body in ("\n", "\r\n", ""):
-                    hunk.lines.append((" ", _strip_op(body) if body else ""))
+                elif op == " ":
+                    hunk.lines.append((" ", _strip_op(body)))
+                    old_seen += 1
+                    new_seen += 1
+                elif body in ("\n", "\r\n"):
+                    # A blank context line whose leading space was stripped
+                    # (mail/editor mangling): the WHOLE line is the content —
+                    # _strip_op would eat the newline and never match the source.
+                    hunk.lines.append((" ", body))
                     old_seen += 1
                     new_seen += 1
                 else:                           # unexpected line ends the hunk
                     break
                 i += 1
+            # A hunk that promises more lines than its body delivers (truncated
+            # download, mangled mail) must not half-apply silently.
+            if old_seen < src_len or new_seen < tgt_len:
+                raise PatchError(
+                    "truncated hunk @ %d: header promises -%d/+%d lines, "
+                    "body has -%d/+%d" % (src_start, src_len, tgt_len,
+                                          old_seen, new_seen), hunk)
             current.hunks.append(hunk)
             continue
+
+        if line.startswith("@@"):
+            # Looked like a hunk header but did not parse (e.g. "@@ -1,3 +1,3 @")
+            # — dropping it would silently skip the whole hunk body.
+            raise PatchError("malformed hunk header: %r" % line)
 
         i += 1      # skip diff --git / index / mode / prose lines
     return files

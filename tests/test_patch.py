@@ -218,3 +218,45 @@ def test_patched_rediffs_to_same_change_count():
     rediff = parse_patch(make_patch(a, patched))[0]
     assert len(rediff.hunks) == len(fp.hunks) == 2
     assert patched == b
+
+
+# ---------------------------------------------------------------------------
+# strict parsing: truncated/malformed input raises; mangled blanks still apply
+# ---------------------------------------------------------------------------
+
+def test_truncated_hunk_raises():
+    patch = ("--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n"
+             " L1\n-L2\n+L2x\n")                    # promises 5/5, delivers 3
+    with pytest.raises(PatchError, match="truncated"):
+        parse_patch(patch)
+
+
+def test_malformed_hunk_header_raises():
+    patch = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @\n one\n-two\n+TWO\n three\n"
+    with pytest.raises(PatchError, match="malformed"):
+        parse_patch(patch)
+
+
+def test_context_format_diff_raises():
+    patch = ("*** f.orig\n--- f\n***************\n"
+             "*** 1,3 ****\n  one\n! two\n  three\n"
+             "--- 1,3 ----\n  one\n! TWO\n  three\n")
+    with pytest.raises(PatchError, match="context-format"):
+        parse_patch(patch)
+
+
+def test_spaceless_nonblank_context_raises():
+    # A context line missing its leading space used to end the hunk silently
+    # (zero-length splice = no-op); now the count check reports it.
+    patch = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\none\n-two\n+TWO\nthree\n"
+    with pytest.raises(PatchError, match="truncated"):
+        parse_patch(patch)
+
+
+def test_mangled_blank_context_line_applies():
+    # Mail clients strip trailing whitespace, turning the ' ' context line for
+    # a blank source line into an empty line. git apply accepts it; so do we.
+    src = "one\n\nthree\n"
+    patch = "--- a/f\n+++ b/f\n@@ -1,3 +1,3 @@\n one\n\n-three\n+THREE\n"
+    fp = parse_patch(patch)[0]
+    assert apply_patch(src, fp) == "one\n\nTHREE\n"
