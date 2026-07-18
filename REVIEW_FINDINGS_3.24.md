@@ -374,6 +374,8 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - D8+D9 — filtered compare is byte-faithful (latin-1, not lossy utf-8); unfiltered compare streams ✅
   - D6 — copy preserves symlinks instead of dereferencing them ✅
   - D10 — 3-way DirDiff exposes copy actions; context menus no longer leak (X6) ✅
+  - D5 — VC metadata dirs (.git/.svn/…) hidden by default (full filter UI still deferred) ✅
+  - **Phase 3 DONE** (S1, D1–D10, V10; D7 case-collision left as a documented minor)
 - ⬜ Phases 3 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

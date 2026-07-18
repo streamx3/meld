@@ -23,6 +23,17 @@ import stat
 STATE_NORMAL, STATE_NOCHANGE, STATE_MODIFIED, STATE_NEW, STATE_MISSING, \
     STATE_ERROR = range(6)
 
+# Version-control metadata directories hidden by default (they are large and
+# never interesting to diff). The full name/text-filter UI is deferred; this is
+# the sane default so comparing two working copies doesn't descend into .git.
+VC_METADATA_DIRS = frozenset(
+    {".git", ".svn", ".hg", ".bzr", "CVS", "_darcs", ".osc"})
+
+
+def default_name_filters():
+    """Default name-filter predicates (keep a name if the predicate is True)."""
+    return [lambda name: name not in VC_METADATA_DIRS]
+
 
 def _streams_equal(paths, chunk=65536):
     """Byte-compare files of equal size without slurping them whole."""

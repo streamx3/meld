@@ -36,6 +36,7 @@ from meldq.dircompare import (
     STATE_NEW,
     STATE_NOCHANGE,
     STATE_NORMAL,
+    default_name_filters,
     walk,
 )
 from meldq.widgets.infobar import InfoBar
@@ -93,7 +94,7 @@ class DirDiffView(QWidget):
         self.num_panes = num_panes
         self._roots = None
         self._mode = "light"
-        self.name_filters = []
+        self.name_filters = default_name_filters()   # hide .git/.svn/… by default
         self.regexes = []
         self.state_filters = {STATE_NORMAL, STATE_NEW, STATE_MODIFIED}
 

@@ -290,3 +290,16 @@ def test_three_way_has_copy_actions(qapp, qtbot, tmp_path):
     # and it actually copies between the requested panes
     view.copy_to(idx, 2, 1)                      # right -> middle
     assert (b / "f.txt").read_text() == "2\n"
+
+
+def test_vc_metadata_dirs_hidden_by_default(dd, tmp_path):
+    # D5: comparing two working copies must not descend into .git/.svn/... .
+    left, right = tmp_path / "left", tmp_path / "right"
+    for d in (left, right):
+        (d / ".git").mkdir(parents=True)
+        (d / ".git" / "config").write_text("x")
+        (d / "file.txt").write_text("a")
+    dd.set_roots([str(left), str(right)])
+    rows = top_rows(dd)
+    assert ".git" not in rows
+    assert "file.txt" in rows
