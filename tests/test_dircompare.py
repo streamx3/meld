@@ -230,3 +230,32 @@ def test_stream_compare_large_same_and_diff(tmp_path):
     assert files_same([str(a), str(b)]) == 1
     write(b, blob[:-1] + b"y")                 # last byte differs
     assert files_same([str(a), str(b)]) == 0
+
+
+# ---------------------------------------------------------------------------
+# D7: case-only duplicate names collapse on a case-insensitive filesystem
+# ---------------------------------------------------------------------------
+
+def test_dedup_names_case_insensitive():
+    from meldq.dircompare import _dedup_names
+    names = {"README", "readme", "other.txt"}
+    # case-sensitive: both spellings kept
+    assert _dedup_names(names, False) == ["README", "other.txt", "readme"]
+    # case-insensitive: one spelling per file (alphabetically-first wins)
+    out = _dedup_names(names, True)
+    assert "other.txt" in out
+    assert len([n for n in out if n.casefold() == "readme"]) == 1
+
+
+def test_walk_case_insensitive_no_phantom_rows(tmp_path, monkeypatch):
+    import meldq.dircompare as dc
+    # Force the case-insensitive path deterministically (Linux CI is sensitive).
+    monkeypatch.setattr(dc, "_is_case_insensitive", lambda p: True)
+    left, right = tmp_path / "l", tmp_path / "r"
+    left.mkdir()
+    right.mkdir()
+    (left / "README").write_bytes(b"x\n")
+    (right / "README").write_bytes(b"x\n")     # same file, one canonical name
+    entries = [e for e in dc.walk([str(left), str(right)])]
+    names = [e.name for e in entries]
+    assert names.count("README") == 1          # not duplicated

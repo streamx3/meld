@@ -343,7 +343,6 @@ items are independent unless noted.
 **Explicitly deferred (documented, not fixed):**
 - **M6** — merging into a read-only pane no-ops; the real fix is a patch-review
   "reject hunk" control (a feature, not a mechanical fix).
-- **D7** — case-insensitive-FS duplicate rows (macOS); nuanced, low impact.
 - **X5** — New-Comparison history clobber (in the legacy `historycombo`).
 - **PF2 tail** — cooperative-generator rewrite for a single pathological diff
   (the per-keystroke case is fixed by debounce); was already on the deferred list.
@@ -353,6 +352,7 @@ items are independent unless noted.
 **Post-completion follow-ups (deferred items now also done):**
 - DOC5 — sync scroll is now chunk-aware (influence-map): corresponding content
   stays aligned across panes of unequal length instead of drifting.
+- D7 — case-only duplicate rows collapse on a case-insensitive FS (macOS).
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.

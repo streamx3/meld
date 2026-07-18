@@ -119,6 +119,31 @@ def entry_states(paths, regexes=()):
     return states, False
 
 
+def _is_case_insensitive(path):
+    """True if `path` lives on a case-insensitive filesystem (macOS APFS/HFS+,
+    Windows). Tested by whether a case-flipped spelling resolves to the same
+    directory — so a name present as README in one pane and readme in another
+    is recognised as ONE file, not two phantom rows."""
+    flipped = path.swapcase()
+    if flipped == path:                 # no letters to flip -> can't tell
+        return False
+    try:
+        return os.path.samestat(os.stat(path), os.stat(flipped))
+    except OSError:
+        return False
+
+
+def _dedup_names(names, case_insensitive):
+    """Sorted names, collapsing case-only duplicates on a case-insensitive FS
+    (the alphabetically-first spelling wins, deterministically)."""
+    if not case_insensitive:
+        return sorted(names)
+    canon = {}
+    for name in sorted(names):
+        canon.setdefault(name.casefold(), name)
+    return list(canon.values())
+
+
 def _listdir(path, name_filters):
     try:
         names = os.listdir(path)
@@ -156,6 +181,7 @@ def walk(roots, name_filters=(), regexes=()):
     comparison."""
     todo = [""]                             # relpaths of directories to expand
     visited = set()                         # real paths already expanded
+    case_insensitive = any(_is_case_insensitive(r) for r in roots)
     while todo:
         rel = todo.pop(0)
         dir_paths = [os.path.join(r, rel) if rel else r for r in roots]
@@ -173,7 +199,7 @@ def walk(roots, name_filters=(), regexes=()):
                 listed = _listdir(dp, name_filters)
                 if listed:
                     names.update(listed)
-        for name in sorted(names):
+        for name in _dedup_names(names, case_insensitive):
             child_rel = os.path.join(rel, name) if rel else name
             paths = [os.path.join(dp, name) for dp in dir_paths]
             isdir = any(os.path.isdir(p) for p in paths)
