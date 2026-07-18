@@ -647,3 +647,44 @@ The headline feature; make import/apply/export trustworthy.
 3. **Fix vs document** for the naive sync scroll (DOC5): implement the
    influence-map mapping now, or reclassify as deferred? (Recommend implement —
    it's small and the current behavior is visibly wrong.)
+
+---
+
+# Improvement plan — round 2 (written 2026-07-18 15:12 EEST)
+
+The review fix-plan above is complete (all tracked findings fixed, 725 tests
+green). This section captures the honest "what still isn't done" assessment and
+the execution order chosen. Verified before writing: non-ASCII/astral inline
+offsets are CORRECT (QScintilla's line/index API is char-based — probed with é
+and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
+
+## Priorities (in execution order)
+
+1. **VC conflict resolution (3-way resolve)** — the last advertised-but-missing
+   capability. Activating a UU-conflicted file must open ours (:2) : working :
+   theirs (:3) as a 3-way merge (outer panes read-only), so the existing merge
+   arrows resolve it; Save writes the working file; Add marks resolved.
+2. **CI** — a GitHub Actions workflow running the full offscreen suite on push;
+   locks in the ~50 fix commits. (Cannot be verified locally; verified on push.)
+3. **Async DirDiff scan** — consume the walk() generator in event-loop slices
+   (same pattern as the FileDiff cooperative re-diff) so huge trees don't
+   freeze the UI; "Scanning…" message while running. Small trees stay
+   synchronous (deterministic tests).
+4. **Find/Replace bar** — a real find bar for the QScintilla panes (Ctrl+F,
+   F3/Shift+F3, case toggle, replace), replacing the one-shot QInputDialog.
+5. **Preferences dialog** — font, theme, tab width, default DirDiff filter
+   globs (the prefs exist; only theme has UI today).
+
+## Stretch (as budget allows, in rough order)
+
+- Per-pane chunkmaps (3-way left pane has no overview).
+- PatchDialog Left↔Right pair for 3-way; per-hunk accept/reject checklist.
+- Async VcView status (QProcess) for huge repos.
+- Line-number margin auto-width (>99,999-line files); word-wrap toggle;
+  go-to-line; swap panes; keyboard merge shortcuts.
+- Text (regex) content-filter UI; streaming filtered compare.
+- Split legacy-tree tests from fresh-tree tests (suite hygiene).
+- Packaging: actually build + smoke the PyInstaller .app/.exe on a real target.
+- i18n: wire the 34 upstream catalogs; consistent _() in fresh views.
+
+## Progress — round 2
