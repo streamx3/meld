@@ -40,3 +40,6 @@ data/mime/meld.xml
 data/org.gnome.Meld.gresource
 data/styles/meld-base.style-scheme.xml
 data/styles/meld-dark.style-scheme.xml
+meldq/resources/locale/
+packaging/dist/
+packaging/build/

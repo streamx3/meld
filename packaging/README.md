@@ -59,3 +59,18 @@ meldq
 preferred on Linux.)
 
 [PyInstaller]: https://pyinstaller.org/
+
+## Translations
+
+Compile the 50 upstream catalogs before packaging (they load from
+`meldq/resources/locale/`, domain "meld"; many msgids match the fresh UI):
+
+```
+python3 packaging/compile_translations.py    # needs gettext's msgfmt
+```
+
+## Build status
+
+The macOS `.app` build was exercised successfully on 2026-07-18
+(pyinstaller 6.x, 80 MB bundle): `--version` works and the full GUI boots
+offscreen with a live comparison. Windows remains unexercised.

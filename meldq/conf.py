@@ -55,7 +55,12 @@ def locale_dir():
     return packaged
 
 
-def init_i18n():
+def init_i18n(localedir=None):
+    """Load the gettext catalogs (domain "meld") from `localedir`, defaulting
+    to the packaged/built locale dir. Language selection follows the standard
+    env vars (LANGUAGE, LC_ALL, LANG); missing catalogs fall back to English.
+    Compile catalogs with packaging/compile_translations.py."""
     global _translation
     _translation = _gettext_module.translation(
-        GETTEXT_DOMAIN, localedir=str(locale_dir()), fallback=True)
+        GETTEXT_DOMAIN, localedir=str(localedir or locale_dir()),
+        fallback=True)
