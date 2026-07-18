@@ -379,7 +379,9 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
 - 🟡 **Phase 4 (VC) — in progress:**
   - V1+V2+V3+V5 — rename commits whole; commit works mid-merge; VC errors surfaced; revert staged-add leaves no ghost ✅
   - V6+V9+V11 — VC view scoped to the opened subdir; git-missing message; copied-entry parse ✅
-- ⬜ Phases 4 (rest)–7 — pending.
+  - V4+V7+V8+V12 — rename diff shows old content; selection preserved; submodule message; HEAD pane read-only ✅
+  - **Phase 4 (VC) DONE**
+- ⬜ Phases 5–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will

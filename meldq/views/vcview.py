@@ -125,6 +125,10 @@ class VcView(QWidget):
         self.refresh()
 
     def refresh(self):
+        # Preserve the selection + current row across the full model rebuild,
+        # so an action (which refreshes) doesn't lose the user's place.
+        selected = set(self._selected_relpaths())
+        current = self.row_relpath(self.tree.currentIndex())
         self.model.removeRows(0, self.model.rowCount())
         if self.repo_root is None:
             return
@@ -138,6 +142,20 @@ class VcView(QWidget):
             return
         for relpath, state in rows:
             self.model.appendRow(self._make_row(relpath, state))
+        self._restore_selection(selected, current)
+
+    def _restore_selection(self, relpaths, current):
+        from PyQt6.QtCore import QItemSelectionModel
+        sel = self.tree.selectionModel()
+        flag = (QItemSelectionModel.SelectionFlag.Select
+                | QItemSelectionModel.SelectionFlag.Rows)
+        for row in range(self.model.rowCount()):
+            idx = self.model.index(row, 0)
+            rel = self.row_relpath(idx)
+            if rel in relpaths:
+                sel.select(idx, flag)
+            if rel == current:
+                self.tree.setCurrentIndex(idx)
 
     def _make_row(self, relpath, state):
         name = QStandardItem(relpath)
@@ -187,8 +205,21 @@ class VcView(QWidget):
         if relpath is None or self.repo_root is None:
             return
         working = os.path.join(self.repo_root, relpath)
+        # A submodule (or any directory entry) can't be diffed as a file; a
+        # working-vs-repo file compare would be empty-vs-empty.
+        if os.path.isdir(working) and not os.path.islink(working):
+            self.infobar.show_message(
+                '"%s" is a directory/submodule and cannot be compared as a '
+                'file.' % relpath)
+            return
         try:
             head_bytes = gitvc.repo_file_content(self.repo_root, relpath)
+            if head_bytes is None:
+                # A renamed file has no content at HEAD under its new name;
+                # fall back to the committed content of its old name.
+                origin = gitvc.rename_origin(self.repo_root, relpath)
+                if origin:
+                    head_bytes = gitvc.repo_file_content(self.repo_root, origin)
         except OSError as exc:
             self.infobar.show_message("Version control error: %s" % exc)
             return

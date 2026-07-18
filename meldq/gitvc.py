@@ -105,6 +105,14 @@ def repo_file_content(repo_root, relpath, ref="HEAD"):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def rename_origin(repo_root, new_relpath):
+    """The old path of `new_relpath` if git reports it as a rename, else None.
+    Lets a working-vs-repo diff show the committed content under the OLD name
+    instead of an empty pane (a renamed path does not exist at HEAD)."""
+    olds = _rename_old_paths(repo_root, {new_relpath})
+    return olds[0] if olds else None
+
+
 def add(repo_root, relpath):
     """Stage `relpath` (start tracking / mark resolved). -> VcResult."""
     return _result(_run(repo_root, ["add", "--", relpath]))

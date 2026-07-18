@@ -390,7 +390,11 @@ class MeldWindow(QMainWindow):
 
     def _on_child_create_diff(self, paths):
         # A dir/VC row was activated -> open a file comparison in a new tab.
-        self.append_filediff(list(paths))
+        view = self.append_filediff(list(paths))
+        # For a VC compare the left pane is the committed (HEAD) version, a
+        # read-only reference — never a save target (it is a throwaway temp).
+        if view is not None and isinstance(self.sender(), VcView):
+            view.panes[0].setReadOnly(True)
 
     def append_diff(self, paths, labels=None):
         paths = list(paths)

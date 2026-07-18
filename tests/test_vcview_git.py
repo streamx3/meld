@@ -311,3 +311,35 @@ def test_status_parses_copied_entry():
     finally:
         g._run = saved
     assert st == {"dest.txt": g.STATE_MODIFIED, "other.txt": g.STATE_MODIFIED}
+
+
+# ----- V4/V7/V8/V12: rename diff, selection, submodule, read-only HEAD ------
+
+def test_rename_diff_shows_old_content(vc, repo):
+    # V4: a renamed file's left (HEAD) pane shows the old name's content, not
+    # an empty pane.
+    git(repo, "mv", "tracked.txt", "renamed.txt")
+    (repo / "renamed.txt").write_text("original\nplus\n")
+    git(repo, "add", "renamed.txt")
+    vc.set_location(str(repo))
+    got = []
+    vc.create_diff.connect(got.append)
+    vc.on_activated(_row(vc, "renamed.txt"))
+    assert got
+    left = got[0][0]
+    with open(left) as f:
+        assert f.read() == "original\n"             # committed old-name content
+
+
+def test_refresh_preserves_selection(vc, repo):
+    # V7: an action refreshes the model; the selection must survive.
+    (repo / "a.txt").write_text("1\n")
+    (repo / "b.txt").write_text("2\n")
+    vc.set_location(str(repo))
+    idx = _row(vc, "b.txt")
+    vc.tree.setCurrentIndex(idx)
+    vc.tree.selectionModel().select(
+        idx, vc.tree.selectionModel().SelectionFlag.Select
+        | vc.tree.selectionModel().SelectionFlag.Rows)
+    vc.refresh()
+    assert "b.txt" in vc._selected_relpaths()       # selection restored
