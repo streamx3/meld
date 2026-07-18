@@ -381,7 +381,10 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - V6+V9+V11 — VC view scoped to the opened subdir; git-missing message; copied-entry parse ✅
   - V4+V7+V8+V12 — rename diff shows old content; selection preserved; submodule message; HEAD pane read-only ✅
   - **Phase 4 (VC) DONE**
-- ⬜ Phases 5–7 — pending.
+- 🟡 **Phase 5 (perf):**
+  - PF1+PF2 — big-file live re-diff debounced (coalesces keystrokes); _INLINE_MAX guard fixed (or) ✅
+    (cooperative-generator rewrite for the pathological single-diff worst case remains, as in the original deferred list)
+- ⬜ Phases 6–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will

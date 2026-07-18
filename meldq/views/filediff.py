@@ -16,7 +16,7 @@ import os
 import stat
 import tempfile
 
-from PyQt6.QtCore import QFileSystemWatcher, QPoint, Qt
+from PyQt6.QtCore import QFileSystemWatcher, QPoint, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygon
 from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
@@ -127,6 +127,15 @@ class FileDiffView(QWidget):
         self._watcher.fileChanged.connect(self._on_file_changed_on_disk)
         self._disk_token = [None] * num_panes
         self.infobar = InfoBar()
+
+        # Live re-diff is synchronous for normal files (correct + immediate). For
+        # a large document it is debounced onto a timer so a burst of keystrokes
+        # coalesces into one re-diff instead of running the full Myers pass (and
+        # per-chunk inline difflib) on every keypress.
+        self._rediff_timer = QTimer(self)
+        self._rediff_timer.setSingleShot(True)
+        self._rediff_timer.setInterval(150)
+        self._rediff_timer.timeout.connect(self._recompute)
 
         # LinkMaps between adjacent panes: 2-way uses opcodes(), 3-way pair_chunks.
         self.linkmaps = []
@@ -445,14 +454,20 @@ class FileDiffView(QWidget):
                 pass
         self._render()
 
+    # Above this many lines in any pane, coalesce live re-diffs via the timer
+    # rather than running one per keystroke (which is a multi-second stall on
+    # large or reorder-heavy files).
+    _LIVE_REDIFF_SYNC_MAX = 2000
+
     def _on_text_changed(self, pane=None):
-        # Synchronous full re-diff. Correct + deterministic; the Differ's
-        # incremental change_sequence swaps in when large-file perf matters.
         if self._loading:
             return
         if pane is not None:
             self._last_edited_pane = pane   # undo/redo follow the real edit
-        self._recompute()
+        if any(p.lines() > self._LIVE_REDIFF_SYNC_MAX for p in self.panes):
+            self._rediff_timer.start()      # debounce big-file re-diffs
+        else:
+            self._recompute()               # small files: immediate + synchronous
 
     def _render(self):
         for view in self.panes:
@@ -525,7 +540,10 @@ class FileDiffView(QWidget):
         # 2-way: mark both sides of a replace in one pass.
         left_region, right_region = left_lines[l1:l2], right_lines[r1:r2]
         text_l, text_r = "\n".join(left_region), "\n".join(right_region)
-        if len(text_l) > self._INLINE_MAX and len(text_r) > self._INLINE_MAX:
+        # Skip intra-line diffing when EITHER side is huge: the char-level
+        # difflib is O(n*m), so a huge-vs-small chunk is just as expensive as
+        # huge-vs-huge (the old `and` let a 200k-vs-9-char chunk through).
+        if len(text_l) > self._INLINE_MAX or len(text_r) > self._INLINE_MAX:
             return
         for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
                 None, text_l, text_r, autojunk=False).get_opcodes():
@@ -541,7 +559,7 @@ class FileDiffView(QWidget):
         # itself from its own single_changes pass (avoids double-marking).
         this_region, other_region = this_lines[lo:hi], other_lines[olo:ohi]
         text_a, text_b = "\n".join(this_region), "\n".join(other_region)
-        if len(text_a) > self._INLINE_MAX and len(text_b) > self._INLINE_MAX:
+        if len(text_a) > self._INLINE_MAX or len(text_b) > self._INLINE_MAX:
             return
         for tag, i1, i2, _j1, _j2 in difflib.SequenceMatcher(
                 None, text_a, text_b, autojunk=False).get_opcodes():

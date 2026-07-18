@@ -355,3 +355,22 @@ def test_next_diff_none_when_identical(fd):
     fd.set_texts(["a\nb\n", "a\nb\n"])
     fd.panes[0].setCursorPosition(0, 0)
     assert fd.next_diff(pane=0) is None
+
+
+def test_large_file_edit_debounces_rediff(fd, qtbot):
+    # PF: on a large document a live edit schedules a coalesced re-diff via the
+    # timer rather than running the full diff synchronously per keystroke.
+    n = 3000
+    text = "".join("line %d\n" % i for i in range(n))
+    fd.set_texts([text, text])
+    assert fd.panes[0].lines() > fd._LIVE_REDIFF_SYNC_MAX
+    fd.panes[0].append("x\n")                      # a user edit
+    assert fd._rediff_timer.isActive()             # debounced, not synchronous
+    qtbot.wait(250)                                # let the timer fire
+    assert not fd._rediff_timer.isActive()
+
+
+def test_small_file_rediff_is_synchronous(fd):
+    fd.set_texts(["a\nb\n", "a\nb\n"])
+    fd.panes[0].append("c\n")
+    assert not fd._rediff_timer.isActive()         # small file: immediate
