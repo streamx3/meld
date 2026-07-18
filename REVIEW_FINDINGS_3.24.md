@@ -336,7 +336,22 @@ items are independent unless noted.
 
 ## Progress
 
-Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
+**All phases (0–7) complete.** Work lands on branch `fix/review-phase0`
+(**not pushed** — awaiting explicit "push it"). Suite: **633 → 712 green**,
+4 skipped, across 33 fix commits (one per unit, each with a regression test).
+
+**Explicitly deferred (documented, not fixed):**
+- **M6** — merging into a read-only pane no-ops; the real fix is a patch-review
+  "reject hunk" control (a feature, not a mechanical fix).
+- **D7** — case-insensitive-FS duplicate rows (macOS); nuanced, low impact.
+- **X5** — New-Comparison history clobber (in the legacy `historycombo`).
+- **PF2 tail** — cooperative-generator rewrite for a single pathological diff
+  (the per-keystroke case is fixed by debounce); was already on the deferred list.
+- Per-plan deferrals: filter UI, chunkmap overview, influence-map sync scroll,
+  DirDiff size/mtime columns, 3-way base→side merge.
+
+Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
+editor font, Ctrl+D navigation.
 
 - ✅ **Phase 0 — DONE** (2026-07-18):
   - C1 — encode-first atomic save (`4f7af1b9`)
