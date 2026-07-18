@@ -708,3 +708,31 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   (Alt+Left/Alt+Right). Still open: per-pane chunkmaps, async VcView status,
   word-wrap/swap-panes, regex content-filter UI, legacy-test split, packaging
   build, i18n.
+
+## Filed issues & decisions — round 2 addendum (2026-07-18)
+
+- **Zoom is uncoordinated (bug, filed).** Editor zoom is QScintilla's built-in
+  per-instance default (Ctrl+scroll / Ctrl+±), with no code in meldq/. Verified:
+  zooming one pane leaves the sibling pane at the old zoom, so line heights
+  diverge and the panes + linkmap misalign; also independent per tab and not
+  persisted. Fix = one app-wide zoom level applied to all panes of all tabs,
+  persisted in a `zoom` pref, plus View ▸ Zoom In/Out/Normal. (Spawned as a
+  background task.)
+
+- **Settings menu — we SHOULD port more of it.** The "minimal prefs" stance came
+  from the original BUILD_PLAN scoping ("NO user colour-picker UI… not a time
+  sink", owner-approved 2026-07-14), not from any technical blocker. A basic
+  Preferences dialog now exists (font, tab width, theme, DirDiff filter globs).
+  GTK Meld's Preferences has far more, all portable and worth doing:
+  - **Editor:** line numbers toggle, show whitespace, text wrapping, right-margin
+    guide, highlight current line, syntax-highlighting on/off + colour scheme,
+    external-editor command.
+  - **Display:** overview map on/off + style, prefer-dark (we have theme).
+  - **Folder Comparisons:** shallow (size+timestamp) compare, apply text filters,
+    ignore symlinks, visible columns (size/mtime/perms).
+  - **File Filters** and **Text Filters:** managed add/remove/edit lists (the big
+    ones — our filters are a single glob string today).
+  - **Version Control:** commit line-wrap, merge order.
+  Recommended: promote the managed **File/Text filter lists** and the **editor
+  display toggles** (line numbers, whitespace, wrap, right margin) next — they
+  are the highest-value gaps versus upstream.
