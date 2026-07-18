@@ -362,6 +362,18 @@ class FileDiffView(QWidget):
         if self.findbar._editor is None:
             self.findbar.attach(self.panes[self.focused_pane()])
 
+    def go_to_line(self, line, pane=None):
+        """Move the cursor of `pane` (default: focused) to 1-based `line`,
+        clamped to the document, and scroll it into view."""
+        if pane is None:
+            pane = self.focused_pane()
+        view = self.panes[pane]
+        target = max(0, min(int(line) - 1, view.lines() - 1))
+        view.setCursorPosition(target, 0)
+        view.ensureLineVisible(target)
+        view.setFocus()
+        return target
+
     def save(self, pane, path=None, force=False):
         """Write `pane` back with its original encoding + EOL. The buffer is
         \\n-normalised, so we restore the file's line endings on the way out;

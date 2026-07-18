@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -177,6 +178,9 @@ class MeldWindow(QMainWindow):
             "Prefere_nces...", QKeySequence.StandardKey.Preferences, None,
             "Configure the editor, theme and filters", self.on_preferences)
 
+        self.action_go_to_line = self._act(
+            "Go to _Line...", "Ctrl+G", None,
+            "Move the cursor to a specific line", self.on_go_to_line)
         self.action_prev_change = self._act(
             "_Previous Change", "Ctrl+E", "go-up",
             "Go to the previous change", self.on_prev_change)
@@ -240,6 +244,8 @@ class MeldWindow(QMainWindow):
         changes_menu = make_menu("changes", "_Changes")
         changes_menu.addAction(self.action_prev_change)
         changes_menu.addAction(self.action_next_change)
+        changes_menu.addSeparator()
+        changes_menu.addAction(self.action_go_to_line)
 
         view_menu = make_menu("view", "_View")
         self._build_theme_menu(view_menu)
@@ -640,6 +646,18 @@ class MeldWindow(QMainWindow):
         dialog.show()
         return dialog
 
+    def on_go_to_line(self):
+        view = self._current_filediff()
+        if view is None:
+            return
+        pane = view.focused_pane()
+        line, ok = QInputDialog.getInt(
+            self, _("Go to Line"), _("Line number:"),
+            view.panes[pane].getCursorPosition()[0] + 1,
+            1, max(1, view.panes[pane].lines()))
+        if ok:
+            view.go_to_line(line, pane)
+
     def on_prev_change(self):
         view = self._current_filediff()
         if view is not None:
@@ -697,7 +715,8 @@ class MeldWindow(QMainWindow):
                        self.action_create_patch, self.action_prev_change,
                        self.action_next_change, self.action_undo,
                        self.action_redo, self.action_cut, self.action_copy,
-                       self.action_paste, self.action_find):
+                       self.action_paste, self.action_find,
+                       self.action_go_to_line):
             action.setEnabled(is_filediff)
         self.action_refresh.setEnabled(is_tree)
         self.action_close.setEnabled(view is not None)
@@ -815,6 +834,7 @@ class PatchDialog(QDialog):
             self.pair = QComboBox()
             self.pair.addItem(_("Left ↔ Middle"), (0, 1))
             self.pair.addItem(_("Middle ↔ Right"), (1, 2))
+            self.pair.addItem(_("Left ↔ Right"), (0, 2))
             self.pair.currentIndexChanged.connect(self._refresh)
             controls.addWidget(self.pair)
         else:

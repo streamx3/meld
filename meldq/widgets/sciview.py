@@ -172,7 +172,8 @@ class MeldSciView(QsciScintilla):
         # Line-number margin (0) + a clickable action margin (1) for merge arrows.
         self.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
         self.setMarginLineNumbers(0, True)
-        self.setMarginWidth(0, "00000")
+        self._update_margin_width()
+        self.linesChanged.connect(self._update_margin_width)
         self.setMarginType(1, QsciScintilla.MarginType.SymbolMargin)
         self.setMarginWidth(1, 16)
         self.setMarginSensitivity(1, True)
@@ -196,6 +197,12 @@ class MeldSciView(QsciScintilla):
             lambda _v: self.scrolled.emit())
 
     # ----- theme ------------------------------------------------------------
+
+    def _update_margin_width(self):
+        """Size the line-number margin to the document's line count (was fixed
+        at 5 digits, truncating numbers in >99,999-line files)."""
+        digits = max(5, len(str(max(1, self.lines()))))
+        self.setMarginWidth(0, "0" * (digits + 1))
 
     def set_base_font(self, font):
         """Set the editor font across every style (overriding the lexers'

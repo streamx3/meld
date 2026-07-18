@@ -83,3 +83,13 @@ def test_ctrl_d_does_not_duplicate_line(qapp, qtbot):
     v.setCursorPosition(0, 0)
     qtbot.keyClick(v, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
     assert v.text() == "line0\nline1\n"     # Ctrl+D no longer duplicates
+
+
+def test_margin_width_grows_with_line_count(qapp, qtbot):
+    from meldq.widgets.sciview import MeldSciView
+    v = MeldSciView()
+    qtbot.addWidget(v)
+    v.set_text("a\nb\n")
+    small = v.marginWidth(0)
+    v.set_text("".join("l%d\n" % i for i in range(150000)))   # 6-digit lines
+    assert v.marginWidth(0) > small                # margin widened to fit

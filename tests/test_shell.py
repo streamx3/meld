@@ -349,7 +349,20 @@ def test_patch_dialog_three_way_pane_selector(window, tmp_path):
     files = [_write(tmp_path / n, "x\n") for n in ("m", "b", "o")]
     view = window.append_filediff(files)
     dialog = PatchDialog(view)
-    assert dialog.pair is not None and dialog.pair.count() == 2
+    assert dialog.pair is not None
+    pairs = [dialog.pair.itemData(i) for i in range(dialog.pair.count())]
+    assert pairs == [(0, 1), (1, 2), (0, 2)]        # incl. Left ↔ Right
+
+
+def test_patch_dialog_left_right_pair(window, tmp_path):
+    files = [_write(tmp_path / "m", "left\n"),
+             _write(tmp_path / "b", "base\n"),
+             _write(tmp_path / "o", "right\n")]
+    view = window.append_filediff(files)
+    dialog = PatchDialog(view)
+    dialog.pair.setCurrentIndex(2)                  # Left ↔ Right
+    text = dialog.patch_text()
+    assert "-left" in text and "+right" in text     # diffs panes 0 and 2
 
 
 # ----- patch import (the differentiator) ------------------------------------
@@ -570,3 +583,11 @@ def test_dirdiff_filter_pref_updates_open_tabs(window, tmp_path):
     assert "junk.tmp" in top_rows(view)
     window.prefs.dirdiff_name_filters = "*.tmp"     # change pref while open
     assert "junk.tmp" not in top_rows(view)
+
+
+def test_go_to_line(window, two_files):
+    view = window.append_filediff(list(two_files))
+    assert view.go_to_line(3) == 2                  # 1-based -> row index 2
+    assert view.panes[0].getCursorPosition() == (2, 0)
+    assert view.go_to_line(9999) == view.panes[0].lines() - 1   # clamped
+    assert window.action_go_to_line.isEnabled()
