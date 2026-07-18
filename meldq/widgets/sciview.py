@@ -16,8 +16,8 @@ Editability is left to the caller (a diff pane may be read-only).
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFontDatabase
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFontDatabase, QKeySequence
 from PyQt6.Qsci import (
     QsciLexerBash,
     QsciLexerCPP,
@@ -223,6 +223,23 @@ class MeldSciView(QsciScintilla):
             return
         digits = max(5, len(str(max(1, self.lines()))))
         self.setMarginWidth(0, "0" * (digits + 1))
+
+    # App-level shortcuts that must beat the editor. QScintilla ACCEPTS the
+    # ShortcutOverride for most modified keys, so while a pane has focus these
+    # would be consumed as plain key events and their QActions would never fire
+    # (the menu item works, the keyboard doesn't — e.g. Cmd+D "Next Change").
+    _APP_SHORTCUTS = tuple(
+        QKeySequence(s)
+        for s in ("Ctrl+D", "Ctrl+E", "Ctrl+G", "Alt+Left", "Alt+Right"))
+
+    def event(self, e):
+        if e.type() == QEvent.Type.ShortcutOverride:
+            pressed = QKeySequence(e.keyCombination())
+            if any(pressed.matches(s) == QKeySequence.SequenceMatch.ExactMatch
+                   for s in self._APP_SHORTCUTS):
+                e.ignore()          # decline: let the shortcut system have it
+                return False
+        return super().event(e)
 
     def _maybe_emit_scrolled(self, *_args):
         fv = self.first_visible_line()

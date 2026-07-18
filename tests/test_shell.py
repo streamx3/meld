@@ -695,3 +695,28 @@ def test_swap_refused_when_modified(window, two_files):
     assert view.is_modified(0)
     assert not view.swap_panes()                      # refused, nothing lost
     assert view.panes[0].text() == "edited\n"
+
+
+def test_editor_declines_app_shortcut_overrides(qapp, qtbot):
+    # The fix for "Cmd+D does nothing while a pane has focus": QScintilla accepts
+    # the ShortcutOverride for modified keys, consuming them as plain key events
+    # so the app QActions never fire. MeldSciView.event() declines the override
+    # for the app-level shortcuts, letting the shortcut system deliver them.
+    from PyQt6.QtCore import QEvent, Qt
+    from PyQt6.QtGui import QKeyEvent
+    from meldq.widgets.sciview import MeldSciView
+    pane = MeldSciView()
+    qtbot.addWidget(pane)
+
+    def override(key, mod):
+        e = QKeyEvent(QEvent.Type.ShortcutOverride, key, mod)
+        e.setAccepted(True)                 # Qt pre-accepts before delivery
+        pane.event(e)
+        return e.isAccepted()
+
+    # App shortcuts: declined (not accepted) -> the QAction gets them.
+    assert not override(Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+    assert not override(Qt.Key.Key_E, Qt.KeyboardModifier.ControlModifier)
+    assert not override(Qt.Key.Key_Right, Qt.KeyboardModifier.AltModifier)
+    # An editor key (Ctrl+A select-all) is NOT declined -> the editor keeps it.
+    assert override(Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)

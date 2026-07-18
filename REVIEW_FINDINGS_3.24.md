@@ -766,6 +766,13 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   `legacy` marker (auto-applied in conftest); `-m "not legacy"` runs the fresh
   product suite (550 tests, ~30%% faster). CI still runs everything.
 
+- Owner-reported bug (2026-07-18): Cmd/Ctrl+D (Next Change) did nothing while
+  an editor pane had focus — QScintilla ACCEPTS the ShortcutOverride for
+  modified keys, consuming them as plain key events so the QAction never fired
+  (the earlier fix only cleared Scintilla's duplicate-line command, not the
+  override). MeldSciView.event() now declines the override for the app-level
+  shortcuts (Ctrl+D/E/G, Alt+Left/Right). Verified end-to-end + hermetic
+  event-level test. ✅
 - Owner-reported bug (2026-07-18): jumping through changes didn't scroll the
   other pane — caret navigation scrolls Scintilla internally with no QScrollBar
   valueChanged, so the sync signal never fired (the old test stubbed the signal
