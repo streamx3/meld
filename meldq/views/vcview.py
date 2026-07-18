@@ -128,23 +128,77 @@ class VcView(QWidget):
             self.infobar.clear()
         self.refresh()
 
+    # ms the status scan may run inline before deferring to the event loop
+    # (small repos stay synchronous and deterministic; huge ones don't freeze).
+    _STATUS_INLINE_MS = 150
+
     def refresh(self):
         # Preserve the selection + current row across the full model rebuild,
         # so an action (which refreshes) doesn't lose the user's place.
         selected = set(self._selected_relpaths())
         current = self.row_relpath(self.tree.currentIndex())
-        self.model.removeRows(0, self.model.rowCount())
         if self.repo_root is None:
+            self.model.removeRows(0, self.model.rowCount())
             return
-        # git shells out; if the repo dir vanished or git is missing the call
-        # raises OSError. A slot exception is fatal in PyQt6, so degrade to a
-        # message bar rather than aborting the app.
-        try:
-            rows = sorted(gitvc.status(self.repo_root, self._pathspec).items())
-        except OSError as exc:
-            self.infobar.show_message("Version control error: %s" % exc)
+        self._cancel_status_proc()
+        from PyQt6.QtCore import QProcess
+        proc = QProcess(self)
+        proc.setProgram("git")
+        proc.setArguments(gitvc.status_args(self._pathspec))
+        proc.setWorkingDirectory(self.repo_root)
+        self._status_proc = proc
+        # finished never fires on FailedToStart (git missing / repo dir gone),
+        # which would leave the "Scanning…" banner up forever.
+        proc.errorOccurred.connect(
+            lambda err, p=proc: self._on_status_start_error(p, err))
+        proc.start()
+        if proc.waitForFinished(self._STATUS_INLINE_MS):
+            self._finish_refresh(proc, selected, current)
+        elif proc is self._status_proc:     # not already failed-to-start
+            # Big repo: keep the old rows visible, scan in the background.
+            self.infobar.show_message("Scanning repository…")
+            proc.finished.connect(
+                lambda *_: self._finish_refresh(proc, selected, current))
+
+    def _on_status_start_error(self, proc, err):
+        from PyQt6.QtCore import QProcess
+        if err != QProcess.ProcessError.FailedToStart \
+                or proc is not self._status_proc:
+            return                          # crashes are reported via finished
+        self._status_proc = None
+        proc.deleteLater()
+        self.infobar.show_message(
+            "Version control error: could not run git (missing binary or "
+            "vanished repository).")
+
+    def _cancel_status_proc(self):
+        proc = getattr(self, "_status_proc", None)
+        if proc is not None:
+            self._status_proc = None
+            try:
+                proc.finished.disconnect()
+            except TypeError:
+                pass
+            proc.kill()
+            proc.deleteLater()
+
+    def _finish_refresh(self, proc, selected, current):
+        from PyQt6.QtCore import QProcess
+        if proc is not self._status_proc:
+            return                          # superseded by a newer refresh
+        self._status_proc = None
+        proc.deleteLater()
+        if proc.exitStatus() != QProcess.ExitStatus.NormalExit \
+                or proc.exitCode() != 0:
+            err = bytes(proc.readAllStandardError()).decode(
+                "utf-8", "replace").strip()
+            self.infobar.show_message(
+                "Version control error: %s" % (err or "git status failed"))
             return
-        for relpath, state in rows:
+        self.infobar.clear()
+        out = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+        self.model.removeRows(0, self.model.rowCount())
+        for relpath, state in sorted(gitvc.parse_porcelain_z(out).items()):
             self.model.appendRow(self._make_row(relpath, state))
         self._restore_selection(selected, current)
 

@@ -385,3 +385,20 @@ def test_conflict_row_emits_create_merge(vc, tmp_path):
         assert f.read() == "ours\n"
     with open(theirs) as f:
         assert f.read() == "theirs\n"
+
+
+def test_refresh_defers_for_slow_status(vc, repo, monkeypatch):
+    # Async status: with the inline window forced to zero the scan defers, shows
+    # a banner, and populates once the process finishes.
+    (repo / "tracked.txt").write_text("changed\n")
+    vc._STATUS_INLINE_MS = 0
+    vc.set_location(str(repo))
+    # either it already finished (fast machine) or the banner is up
+    import pytest as _pytest
+    from PyQt6.QtTest import QTest
+    deadline = 200
+    while vc._status_proc is not None and deadline > 0:
+        QTest.qWait(20)
+        deadline -= 1
+    assert rows(vc) == {"tracked.txt": gitvc.STATE_MODIFIED}
+    assert vc.infobar.message is None          # banner cleared after finish

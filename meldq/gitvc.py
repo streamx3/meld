@@ -70,20 +70,20 @@ def _classify(xy):
     return STATE_MODIFIED        # M / T / R / C
 
 
-def status(repo_root, pathspec=None):
-    """Map relpath -> state for every file git reports as changed or untracked.
-
-    Uses ``git status --porcelain -z`` so paths with spaces/newlines are safe;
-    a rename ("R") or copy ("C") entry carries a trailing origin-path token
-    which is skipped. `pathspec` scopes the report to a subdirectory.
-    """
+def status_args(pathspec=None):
+    """The git argv (after "git") used for a status scan — shared by the
+    blocking status() and the view's async QProcess runner."""
     args = ["status", "--porcelain", "-z", "--untracked-files=all"]
     if pathspec:
         args += ["--", pathspec]
-    proc = _run(repo_root, args)
-    if proc.returncode != 0:
-        return {}
-    tokens = proc.stdout.split("\0")
+    return args
+
+
+def parse_porcelain_z(text):
+    """Map relpath -> state from ``git status --porcelain -z`` output. Paths
+    with spaces/newlines are safe; a rename ("R") or copy ("C") entry carries a
+    trailing origin-path token which is skipped."""
+    tokens = text.split("\0")
     result = {}
     i = 0
     while i < len(tokens):
@@ -96,6 +96,15 @@ def status(repo_root, pathspec=None):
             i += 1
         result[path] = _classify(xy)
     return result
+
+
+def status(repo_root, pathspec=None):
+    """Map relpath -> state for every file git reports as changed or untracked
+    under `repo_root` (optionally scoped to `pathspec`)."""
+    proc = _run(repo_root, status_args(pathspec))
+    if proc.returncode != 0:
+        return {}
+    return parse_porcelain_z(proc.stdout)
 
 
 def repo_file_content(repo_root, relpath, ref="HEAD"):

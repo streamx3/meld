@@ -758,6 +758,8 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
     from 0→True to match what the editor actually shows.
 - Round-3 stretch (2026-07-18): per-pane chunkmaps (both outer edges) ✅;
   word-wrap + show-whitespace prefs wired (methods existed unused) ✅.
+- Async VcView status ✅ (QProcess, 150ms inline window; "Scanning repository…"
+  banner; FailedToStart surfaces an error instead of a stuck banner).
 - Still open: external-editor command, overview-map style, VC commit-wrap/merge
-  order, visible size/mtime columns, async VcView status, swap panes,
-  legacy-test split, packaging build, i18n.
+  order, visible size/mtime columns, swap panes, legacy-test split, packaging
+  build, i18n.

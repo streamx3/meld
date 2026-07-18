@@ -102,5 +102,9 @@ def test_vcview_refresh_after_repo_vanishes(qapp, qtbot, tmp_path):
     qtbot.addWidget(view)
     view.set_location(str(repo))
     shutil.rmtree(repo)                               # cwd gone
-    view.refresh()                                    # OSError inside -> message
-    assert view.infobar.message is not None
+    view.refresh()                                    # must not crash
+    # A vanished repo means git can't start: an explicit ERROR message, not a
+    # stuck "Scanning…" banner.
+    def has_error():
+        assert view.infobar.message and "error" in view.infobar.message.lower()
+    qtbot.waitUntil(has_error, timeout=3000)
