@@ -179,3 +179,37 @@ def test_view_commit_ignores_empty_message(vc, repo):
     vc.set_location(str(repo))
     vc.commit_files(["tracked.txt"], "   ")   # blank -> no commit
     assert rows(vc) == {"tracked.txt": gitvc.STATE_MODIFIED}
+
+
+# ----- V10: confirm before irreversible revert/remove -----------------------
+
+def _row(view, rel):
+    m = view.model
+    for r in range(m.rowCount()):
+        if view.row_relpath(m.index(r, 0)) == rel:
+            return m.index(r, 0)
+    raise KeyError(rel)
+
+
+def test_revert_untracked_confirmed(vc, repo, monkeypatch):
+    (repo / "fresh.txt").write_text("new\n")           # untracked (STATE_NEW)
+    vc.set_location(str(repo))
+    monkeypatch.setattr(vc, "_confirm", lambda msg: True)
+    vc.revert(_row(vc, "fresh.txt"))
+    assert not (repo / "fresh.txt").exists()           # confirmed -> deleted
+
+
+def test_revert_untracked_declined_keeps_file(vc, repo, monkeypatch):
+    (repo / "fresh.txt").write_text("new\n")
+    vc.set_location(str(repo))
+    monkeypatch.setattr(vc, "_confirm", lambda msg: False)
+    vc.revert(_row(vc, "fresh.txt"))
+    assert (repo / "fresh.txt").exists()               # declined -> kept
+
+
+def test_remove_declined_keeps_file(vc, repo, monkeypatch):
+    (repo / "tracked.txt").write_text("changed\n")
+    vc.set_location(str(repo))
+    monkeypatch.setattr(vc, "_confirm", lambda msg: False)
+    vc.remove(_row(vc, "tracked.txt"))
+    assert (repo / "tracked.txt").exists()             # declined -> not removed

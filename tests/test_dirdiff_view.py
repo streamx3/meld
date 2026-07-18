@@ -232,3 +232,27 @@ def test_three_way(qapp, qtbot, tmp_path):
     assert view.model.columnCount() == 3
     idx = view.model.index(0, 0)
     assert view.row_state(idx, 2) == STATE_MODIFIED
+
+
+def test_delete_trash_failure_confirmed(dd, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QFile
+    monkeypatch.setattr(QFile, "moveToTrash", staticmethod(lambda p: False))
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"a\n")
+    write(right / "f.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+    monkeypatch.setattr(dd, "_confirm", lambda msg: True)
+    dd.delete(top_rows(dd)["f.txt"], 0)                # to_trash=True default
+    assert not (left / "f.txt").exists()               # confirmed -> deleted
+
+
+def test_delete_trash_failure_declined(dd, tmp_path, monkeypatch):
+    from PyQt6.QtCore import QFile
+    monkeypatch.setattr(QFile, "moveToTrash", staticmethod(lambda p: False))
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"a\n")
+    write(right / "f.txt", b"a\n")
+    dd.set_roots([str(left), str(right)])
+    monkeypatch.setattr(dd, "_confirm", lambda msg: False)
+    dd.delete(top_rows(dd)["f.txt"], 0)
+    assert (left / "f.txt").exists()                   # declined -> kept

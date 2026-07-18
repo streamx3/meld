@@ -206,10 +206,33 @@ class VcView(QWidget):
         self._act(index, gitvc.add)
 
     def remove(self, index):
+        rel = self.row_relpath(index)
+        if rel is None:
+            return
+        if not self._confirm(
+                'Remove "%s" from version control and delete it from the '
+                'working tree?' % rel):
+            return
         self._act(index, gitvc.remove)
 
     def revert(self, index):
+        rel = self.row_relpath(index)
+        if rel is None:
+            return
+        # Reverting an untracked/added file deletes the only copy (it is not in
+        # git and not in the trash) — confirm before that irreversible loss.
+        if self.row_state(index) == gitvc.STATE_NEW and not self._confirm(
+                'Revert will permanently delete the untracked file "%s". '
+                'Continue?' % rel):
+            return
         self._act(index, gitvc.revert)
+
+    def _confirm(self, message):
+        """Yes/No confirmation for an irreversible action. A method so tests can
+        stub it without a modal dialog."""
+        from PyQt6.QtWidgets import QMessageBox
+        return QMessageBox.question(self, "Confirm", message) \
+            == QMessageBox.StandardButton.Yes
 
     def _selected_relpaths(self):
         out = []

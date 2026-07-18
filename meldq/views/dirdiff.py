@@ -321,9 +321,18 @@ class DirDiffView(QWidget):
         if path is None or not os.path.exists(path):
             return
         try:
-            if to_trash and QFile.moveToTrash(path):
-                pass
-            elif os.path.isdir(path):
+            if to_trash:
+                if QFile.moveToTrash(path):
+                    self.refresh()
+                    return
+                # Trash is unavailable (NFS, a volume with no trash location).
+                # Confirm before an IRREVERSIBLE delete rather than silently
+                # destroying the file.
+                if not self._confirm(
+                        'Could not move "%s" to Trash. Delete it permanently?'
+                        % os.path.basename(path)):
+                    return
+            if os.path.isdir(path):
                 shutil.rmtree(path)
             else:
                 os.remove(path)
@@ -331,6 +340,13 @@ class DirDiffView(QWidget):
             self.infobar.show_message("Could not delete: %s" % exc)
             return
         self.refresh()
+
+    def _confirm(self, message):
+        """Yes/No confirmation for an irreversible action. A method so tests
+        (and a future headless caller) can stub it without a modal dialog."""
+        from PyQt6.QtWidgets import QMessageBox
+        return QMessageBox.question(self, "Confirm", message) \
+            == QMessageBox.StandardButton.Yes
 
     # ----- context menu -----------------------------------------------------
 
