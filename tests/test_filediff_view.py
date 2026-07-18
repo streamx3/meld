@@ -469,3 +469,39 @@ def test_push_change_keyboard_2way(fd):
     before = fd.panes[0].text()
     fd.push_change(-1, pane=0)
     assert fd.panes[0].text() == before
+
+
+def test_next_diff_scrolls_other_pane(fd, qtbot, qapp):
+    # Jumping through changes must drag the sibling pane along: caret
+    # navigation scrolls Scintilla internally (no QScrollBar valueChanged), so
+    # scroll detection goes through SCN_UPDATEUI. No stubbed sender here — this
+    # exercises the real signal path.
+    left = "".join(("CHG\n" if i in (10, 150) else "common%d\n" % i)
+                   for i in range(200))
+    right = "".join(("DIFF\n" if i in (10, 150) else "common%d\n" % i)
+                    for i in range(200))
+    fd.set_texts([left, right])
+    fd.resize(800, 300)
+    fd.show()
+    qtbot.waitExposed(fd)
+    fd.panes[0].setCursorPosition(0, 0)
+    fd.next_diff(pane=0)
+    fd.next_diff(pane=0)                         # line 150, far off-screen
+    qapp.processEvents()
+    assert fd.panes[0].first_visible_line() > 100
+    assert fd.panes[1].first_visible_line() > 100    # sibling followed
+
+
+def test_real_scroll_signal_syncs_unstubbed(fd, qtbot, qapp):
+    left = "".join("INS\n" for _ in range(20)) + \
+        "".join("c%d\n" % i for i in range(200))
+    right = "".join("c%d\n" % i for i in range(200))
+    fd.set_texts([left, right])
+    fd.resize(800, 300)
+    fd.show()
+    qtbot.waitExposed(fd)
+    fd.panes[0].scroll_to_line(120)              # left 120 = c100
+    qapp.processEvents()
+    lv = fd.panes[0].first_visible_line()
+    rv = fd.panes[1].first_visible_line()
+    assert left.split("\n")[lv] == right.split("\n")[rv]   # content-aligned

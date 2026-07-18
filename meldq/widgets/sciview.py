@@ -204,8 +204,14 @@ class MeldSciView(QsciScintilla):
         self.SCN_ZOOM.connect(self._on_scn_zoom)
 
         self.apply_theme(LIGHT)
-        self.verticalScrollBar().valueChanged.connect(
-            lambda _v: self.scrolled.emit())
+        # Scroll detection must catch EVERY cause, not just scrollbar drags:
+        # caret navigation (next-change jumps via SCI_GOTOPOS), keyboard paging
+        # and wheel all scroll Scintilla internally without a QScrollBar
+        # valueChanged. SCN_UPDATEUI fires on any view update, so both sources
+        # funnel through one first-visible-line change guard.
+        self._last_first_visible = 0
+        self.verticalScrollBar().valueChanged.connect(self._maybe_emit_scrolled)
+        self.SCN_UPDATEUI.connect(self._maybe_emit_scrolled)
 
     # ----- theme ------------------------------------------------------------
 
@@ -217,6 +223,12 @@ class MeldSciView(QsciScintilla):
             return
         digits = max(5, len(str(max(1, self.lines()))))
         self.setMarginWidth(0, "0" * (digits + 1))
+
+    def _maybe_emit_scrolled(self, *_args):
+        fv = self.first_visible_line()
+        if fv != self._last_first_visible:
+            self._last_first_visible = fv
+            self.scrolled.emit()
 
     # ----- zoom (one app-wide level; see shell) -----------------------------
 

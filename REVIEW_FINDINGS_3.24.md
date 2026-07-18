@@ -766,6 +766,13 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   `legacy` marker (auto-applied in conftest); `-m "not legacy"` runs the fresh
   product suite (550 tests, ~30%% faster). CI still runs everything.
 
+- Owner-reported bug (2026-07-18): jumping through changes didn't scroll the
+  other pane — caret navigation scrolls Scintilla internally with no QScrollBar
+  valueChanged, so the sync signal never fired (the old test stubbed the signal
+  path and masked this). Fixed: scroll detection now funnels SCN_UPDATEUI +
+  scrollbar changes through a first-visible-line guard; unstubbed end-to-end
+  tests added. ✅
+
 **Stretch list complete** (2026-07-18). Remaining ideas are only the small
 unported settings: external-editor command, overview-map style, VC
 commit-wrap/merge order, visible size/mtime columns.
