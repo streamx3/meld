@@ -343,3 +343,45 @@ def test_refresh_preserves_selection(vc, repo):
         | vc.tree.selectionModel().SelectionFlag.Rows)
     vc.refresh()
     assert "b.txt" in vc._selected_relpaths()       # selection restored
+
+
+# ----- conflict resolution (3-way resolve) ----------------------------------
+
+def _conflict_repo(tmp_path):
+    r = tmp_path / "conflict"
+    r.mkdir()
+    git(r, "init", "-q", "-b", "main")
+    (r / "f.txt").write_text("base\n")
+    git(r, "add", "-A")
+    git(r, "commit", "-qm", "base")
+    git(r, "checkout", "-q", "-b", "other")
+    (r / "f.txt").write_text("theirs\n")
+    git(r, "commit", "-qam", "theirs")
+    git(r, "checkout", "-q", "main")
+    (r / "f.txt").write_text("ours\n")
+    git(r, "commit", "-qam", "ours")
+    subprocess.run(["git", "merge", "other"], cwd=r, capture_output=True)
+    return r
+
+
+def test_conflict_stage_content(tmp_path):
+    r = _conflict_repo(tmp_path)
+    assert gitvc.status(str(r))["f.txt"] == gitvc.STATE_CONFLICT
+    assert gitvc.conflict_stage_content(str(r), "f.txt", 1) == b"base\n"
+    assert gitvc.conflict_stage_content(str(r), "f.txt", 2) == b"ours\n"
+    assert gitvc.conflict_stage_content(str(r), "f.txt", 3) == b"theirs\n"
+
+
+def test_conflict_row_emits_create_merge(vc, tmp_path):
+    r = _conflict_repo(tmp_path)
+    vc.set_location(str(r))
+    got = []
+    vc.create_merge.connect(got.append)
+    vc.on_activated(_row(vc, "f.txt"))
+    assert len(got) == 1
+    ours, working, theirs = got[0]
+    assert working == str(r / "f.txt")            # middle = the real file
+    with open(ours) as f:
+        assert f.read() == "ours\n"
+    with open(theirs) as f:
+        assert f.read() == "theirs\n"

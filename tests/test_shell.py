@@ -469,3 +469,52 @@ def test_close_tab_removes_it(window, two_files):
     assert window.tabs.count() == 1
     window.on_close_tab()
     assert window.tabs.count() == 0
+
+
+def test_vc_conflict_opens_three_way_resolve(window, tmp_path):
+    # Priority-1: activating a UU-conflicted file opens ours|working|theirs with
+    # read-only outer panes; merging + saving resolves into the working file.
+    import subprocess
+
+    from meldq import gitvc
+    if not gitvc.is_git_available():
+        import pytest
+        pytest.skip("git not available")
+
+    def git(repo, *args):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                        *args], cwd=repo, check=True, capture_output=True)
+
+    r = tmp_path / "cr"
+    r.mkdir()
+    git(r, "init", "-q", "-b", "main")
+    (r / "f.txt").write_text("base\n")
+    git(r, "add", "-A")
+    git(r, "commit", "-qm", "base")
+    git(r, "checkout", "-q", "-b", "other")
+    (r / "f.txt").write_text("theirs\n")
+    git(r, "commit", "-qam", "theirs")
+    git(r, "checkout", "-q", "main")
+    (r / "f.txt").write_text("ours\n")
+    git(r, "commit", "-qam", "ours")
+    subprocess.run(["git", "merge", "other"], cwd=r, capture_output=True)
+
+    vc = window.append_vcview(str(r))
+    row = vc.model.index(0, 0)
+    before = window.tabs.count()
+    vc.on_activated(row)
+    assert window.tabs.count() == before + 1
+    fd = window.tabs.currentWidget()
+    assert fd.num_panes == 3
+    assert fd.panes[0].isReadOnly() and fd.panes[2].isReadOnly()
+    assert not fd.panes[1].isReadOnly()
+    assert fd.panes[0].text() == "ours\n"
+    assert fd.panes[2].text() == "theirs\n"
+    assert "<<<<<<<" in fd.panes[1].text()        # working copy with markers
+    # Resolve: take "theirs" wholesale into the middle and save.
+    fd.panes[1].set_text("theirs\n")
+    fd.save(1, force=True)
+    assert (r / "f.txt").read_text() == "theirs\n"
+    # Add marks it resolved -> no longer conflicted.
+    assert gitvc.add(str(r), "f.txt")
+    assert gitvc.status(str(r)).get("f.txt") != gitvc.STATE_CONFLICT

@@ -105,6 +105,14 @@ def repo_file_content(repo_root, relpath, ref="HEAD"):
     return proc.stdout if proc.returncode == 0 else None
 
 
+def conflict_stage_content(repo_root, relpath, stage):
+    """Bytes of `relpath` at merge `stage` (1=base, 2=ours, 3=theirs) during an
+    unmerged state, or None if that stage doesn't exist (e.g. add/add conflicts
+    have no base)."""
+    proc = _run(repo_root, ["show", ":%d:%s" % (stage, relpath)], binary=True)
+    return proc.stdout if proc.returncode == 0 else None
+
+
 def rename_origin(repo_root, new_relpath):
     """The old path of `new_relpath` if git reports it as a rename, else None.
     Lets a working-vs-repo diff show the committed content under the OLD name

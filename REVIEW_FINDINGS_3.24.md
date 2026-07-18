@@ -688,3 +688,7 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
 - i18n: wire the 34 upstream catalogs; consistent _() in fresh views.
 
 ## Progress — round 2
+
+- ✅ P1 (2026-07-18): VC conflict resolution — UU rows open ours|working|theirs
+  3-way (outer panes read-only), merge arrows resolve into the working file,
+  Save writes it, Add marks resolved. End-to-end test with a real merge repo.

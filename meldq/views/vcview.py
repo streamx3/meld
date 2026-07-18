@@ -70,6 +70,10 @@ _FG = {
 
 class VcView(QWidget):
     create_diff = pyqtSignal(list)      # [repo_version_path, working_path]
+    # A UU conflict: [ours_path, working_path, theirs_path] — the host opens a
+    # 3-way merge with the outer panes read-only; resolving = editing the
+    # middle (working) pane via the merge arrows and saving it.
+    create_merge = pyqtSignal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -212,6 +216,23 @@ class VcView(QWidget):
                 '"%s" is a directory/submodule and cannot be compared as a '
                 'file.' % relpath)
             return
+        # A conflicted file opens as a 3-way resolve: ours (:2) | working |
+        # theirs (:3). The working copy (with conflict markers) is the editable
+        # middle; the merge arrows push either side into it.
+        if self.row_state(index) == gitvc.STATE_CONFLICT:
+            try:
+                ours = gitvc.conflict_stage_content(self.repo_root, relpath, 2)
+                theirs = gitvc.conflict_stage_content(self.repo_root, relpath, 3)
+            except OSError as exc:
+                self.infobar.show_message("Version control error: %s" % exc)
+                return
+            if ours is not None and theirs is not None:
+                left = self._materialize(relpath + ".ours", ours)
+                right = self._materialize(relpath + ".theirs", theirs)
+                self.create_merge.emit([left, working, right])
+                return
+            # A one-sided conflict (e.g. delete/modify) has no both-sides pair;
+            # fall through to the plain working-vs-HEAD comparison.
         try:
             head_bytes = gitvc.repo_file_content(self.repo_root, relpath)
             if head_bytes is None:

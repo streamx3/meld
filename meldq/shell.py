@@ -411,6 +411,7 @@ class MeldWindow(QMainWindow):
     def append_vcview(self, location, labels=None):
         view = VcView()
         view.create_diff.connect(self._on_child_create_diff)
+        view.create_merge.connect(self._on_child_create_merge)
         view.set_theme(self._resolve_mode())
         view.set_location(location)
         title = (labels[0] if labels else None) or \
@@ -425,6 +426,18 @@ class MeldWindow(QMainWindow):
         # read-only reference — never a save target (it is a throwaway temp).
         if view is not None and isinstance(self.sender(), VcView):
             view.panes[0].setReadOnly(True)
+
+    def _on_child_create_merge(self, paths):
+        # A conflicted VC file -> 3-way resolve: ours | working | theirs. The
+        # outer panes are read-only references (throwaway temps); the middle is
+        # the real working file — merge into it, save, then Add marks resolved.
+        view = self.append_filediff(list(paths))
+        if view is not None and view.num_panes == 3:
+            view.panes[0].setReadOnly(True)
+            view.panes[2].setReadOnly(True)
+            view.infobar.show_message(
+                _("Resolve the conflict: merge either side into the middle "
+                  "(working) pane, save it, then use Add to mark it resolved."))
 
     def append_diff(self, paths, labels=None):
         paths = list(paths)
