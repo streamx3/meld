@@ -358,27 +358,38 @@ class DirDiffView(QWidget):
 
     # ----- context menu -----------------------------------------------------
 
-    def _context_menu(self, pos):
-        index = self.tree.indexAt(pos)
-        if not index.isValid():
-            return
+    # Copy directions per pane count: (src, dst, label). 3-way copies between
+    # each outer pane and the middle (so copy is reachable, not only in 2-way).
+    _COPY_DIRS = {
+        2: ((0, 1, "Copy to Right"), (1, 0, "Copy to Left")),
+        3: ((0, 1, "Copy Left → Middle"), (1, 0, "Copy Middle → Left"),
+            (1, 2, "Copy Middle → Right"), (2, 1, "Copy Right → Middle")),
+    }
+
+    def _build_context_menu(self, index):
         menu = QMenu(self.tree)
         compare = QAction("Compare", menu)
         compare.triggered.connect(lambda: self.on_activated(index))
         menu.addAction(compare)
         menu.addSeparator()
-        if self.num_panes == 2:
-            to_right = QAction("Copy to Right", menu)
-            to_right.triggered.connect(lambda: self.copy_to(index, 0, 1))
-            to_left = QAction("Copy to Left", menu)
-            to_left.triggered.connect(lambda: self.copy_to(index, 1, 0))
-            menu.addAction(to_right)
-            menu.addAction(to_left)
+        for src, dst, label in self._COPY_DIRS.get(self.num_panes, ()):
+            act = QAction(label, menu)
+            act.triggered.connect(
+                lambda _=False, s=src, d=dst: self.copy_to(index, s, d))
+            menu.addAction(act)
         menu.addSeparator()
         for pane in range(self.num_panes):
             act = QAction("Delete (pane %d)" % pane, menu)
             act.triggered.connect(lambda _=False, p=pane: self.delete(index, p))
             menu.addAction(act)
+        return menu
+
+    def _context_menu(self, pos):
+        index = self.tree.indexAt(pos)
+        if not index.isValid():
+            return
+        menu = self._build_context_menu(index)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)  # no per-click leak
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
 

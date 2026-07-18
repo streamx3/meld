@@ -275,6 +275,7 @@ class VcView(QWidget):
             action = QAction(label, menu)
             action.triggered.connect(slot)
             menu.addAction(action)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)   # no per-click leak
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _materialize(self, relpath, data):

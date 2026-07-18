@@ -269,3 +269,24 @@ def test_copy_preserves_symlink(dd, tmp_path):
     dd.copy_to(top_rows(dd)["link.txt"], 0, 1)
     assert os.path.islink(right / "link.txt")         # copied as a link
     assert os.readlink(right / "link.txt") == "target.txt"
+
+
+def test_three_way_has_copy_actions(qapp, qtbot, tmp_path):
+    # D10: a 3-way comparison must expose copy actions (they were built only
+    # for num_panes == 2, so 3-way could compare/delete but never copy).
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    for d in (a, b, c):
+        d.mkdir()
+    (a / "f.txt").write_text("1\n")
+    (b / "f.txt").write_text("1\n")
+    (c / "f.txt").write_text("2\n")
+    view = DirDiffView(3)
+    qtbot.addWidget(view)
+    view.set_roots([str(a), str(b), str(c)])
+    idx = top_rows(view)["f.txt"]
+    menu = view._build_context_menu(idx)
+    labels = [act.text() for act in menu.actions() if act.text()]
+    assert any("Copy" in l for l in labels)     # copy is reachable in 3-way
+    # and it actually copies between the requested panes
+    view.copy_to(idx, 2, 1)                      # right -> middle
+    assert (b / "f.txt").read_text() == "2\n"
