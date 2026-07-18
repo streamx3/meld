@@ -316,3 +316,29 @@ def test_size_time_tooltip_on_cells(dd, tmp_path):
     tip = item.toolTip()
     assert "Size:" in tip and "Modified:" in tip
     assert "12 B" in tip                          # left pane's size
+
+
+def test_name_filter_bar_hides_globs(dd, tmp_path):
+    # The filter bar's globs hide matching names, on top of the .git default.
+    left, right = tmp_path / "left", tmp_path / "right"
+    for d in (left, right):
+        write(d / "keep.py", b"x\n")
+        write(d / "junk.pyc", b"x\n")
+        write(d / "obj.o", b"x\n")
+    dd.set_roots([str(left), str(right)])
+    assert "junk.pyc" in top_rows(dd)
+    dd.apply_name_filter_text("*.pyc *.o")
+    rows = top_rows(dd)
+    assert "keep.py" in rows
+    assert "junk.pyc" not in rows and "obj.o" not in rows
+
+
+def test_name_filter_bar_keeps_vc_default(dd, tmp_path):
+    left, right = tmp_path / "left", tmp_path / "right"
+    for d in (left, right):
+        (d / ".git").mkdir(parents=True)
+        (d / ".git" / "cfg").write_text("x")
+        write(d / "a.txt", b"x\n")
+    dd.set_roots([str(left), str(right)])
+    dd.apply_name_filter_text("*.tmp")            # unrelated glob
+    assert ".git" not in top_rows(dd)             # default VC filter still applies

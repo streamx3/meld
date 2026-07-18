@@ -113,9 +113,22 @@ class DirDiffView(QWidget):
         self.tree.customContextMenuRequested.connect(self._context_menu)
         self.infobar = InfoBar()
 
+        # A minimal name-filter bar: space-separated globs to HIDE (e.g.
+        # "*.pyc *.o build"). Applied on top of the default VC-metadata filter.
+        from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Hide names (globs, space-separated)")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.editingFinished.connect(self.apply_name_filter_text)
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(4, 2, 4, 2)
+        filter_row.addWidget(QLabel("Filter:"))
+        filter_row.addWidget(self.filter_edit, 1)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addLayout(filter_row)
         layout.addWidget(self.infobar)
         layout.addWidget(self.tree, 1)
 
@@ -136,6 +149,23 @@ class DirDiffView(QWidget):
         """Show only rows in these categories (STATE_NORMAL/NEW/MODIFIED)."""
         self.state_filters = set(states)
         self.refresh()
+
+    def apply_name_filter_text(self, text=None):
+        """Parse the filter bar's space-separated globs into hide-predicates,
+        combined with the default VC-metadata filter, and re-scan."""
+        import fnmatch
+
+        if text is None:
+            text = self.filter_edit.text()
+        elif self.filter_edit.text() != text:
+            self.filter_edit.setText(text)
+        globs = text.split()
+        filters = default_name_filters()
+        for glob in globs:
+            filters.append(lambda name, g=glob: not fnmatch.fnmatch(name, g))
+        self.name_filters = filters
+        if self._roots:
+            self.refresh()
 
     def _populate(self, auto_expand_diffs):
         expanded = self._expanded_relpaths()
