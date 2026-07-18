@@ -391,6 +391,9 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - (X6 menu leak already fixed with D10)
   - X2 — themed icons fall back to platform-style standard icons (no blank macOS toolbar) ✅
   - X4 — migrated custom font falls back to a fixed-pitch family ✅
+  - X7 — 4-file comparison warns instead of silently dropping the 4th path ✅
+  - X8 — New-Comparison validates before closing (no discarded input) ✅
+  - **Phase 6 DONE** (X5 history-clobber left as a documented minor in legacy historycombo)
 - ⬜ Phase 6 (rest: X2 icons, X5 history, X7/X8 CLI/dialog, X4 font) + Phase 7 (docs) — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

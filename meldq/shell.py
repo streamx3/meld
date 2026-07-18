@@ -381,7 +381,11 @@ class MeldWindow(QMainWindow):
     def append_filediff(self, files, labels=None):
         files = list(files)
         if len(files) == 4:
-            files = files[:3]        # v1: no separate merge-output pane
+            # v1 has no separate merge-output pane; surface the drop instead of
+            # silently discarding the 4th path.
+            self._warn(_("A 4-file merge (with output) is not supported; "
+                         "comparing the first 3 files."))
+            files = files[:3]
         if len(files) not in (2, 3):
             self._warn(_("A file comparison needs 2 or 3 files."))
             return None
@@ -909,8 +913,12 @@ class NewComparisonDialog(QDialog):
         self.buttonbox.button(
             QDialogButtonBox.StandardButton.Ok).setDefault(True)
 
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: #cc0000;")
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.notebook)
+        layout.addWidget(self.error_label)
         layout.addWidget(self.buttonbox)
 
         self.entrylists = (
@@ -950,6 +958,16 @@ class NewComparisonDialog(QDialog):
         if page < 2 and not self.three_way[page].isChecked():
             paths.pop(0)                       # drop the "Other" slot in 2-way
         paths = [p for p in paths if p]
+        # Validate BEFORE closing so insufficient input isn't silently discarded
+        # (the dialog is WA_DeleteOnClose — a premature super().accept() throws
+        # away everything the user typed).
+        needed = 1 if page == 2 else 2
+        if len(paths) < needed:
+            self.error_label.setText(
+                _("Choose a directory to open.") if page == 2
+                else _("Choose at least two items to compare."))
+            return
+        self.error_label.clear()
         for entry in entries:
             value = entry.get_full_path()
             if value:
@@ -958,6 +976,6 @@ class NewComparisonDialog(QDialog):
             self.window.append_filediff(paths)
         elif page == 1:
             self.window.append_dirdiff(paths)
-        elif paths:
+        else:
             self.window.append_vcview(paths[0])
         super().accept()

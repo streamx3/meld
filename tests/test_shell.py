@@ -8,7 +8,7 @@ headless; the fixture stubs the only close-time prompt).
 
 import pytest
 from PyQt6.QtCore import QEvent, QSettings
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from meldq.shell import MeldWindow, NewComparisonDialog, PatchDialog
 from meldq.util.prefs import Preferences
@@ -248,6 +248,29 @@ def test_save_writes_modified_pane(window, two_files):
     with open(b, encoding="utf-8") as handle:
         assert handle.read() == "one\nEDITED\nthree\n"
     assert not view.is_modified(1)
+
+
+def test_new_comparison_invalid_input_keeps_dialog(window):
+    # X8: OK with insufficient input must not close (discarding what was typed).
+    dlg = NewComparisonDialog(window)
+    dlg.notebook.setCurrentIndex(0)                 # file tab, nothing entered
+    before = window.tabs.count()
+    dlg.accept()
+    assert window.tabs.count() == before            # no comparison opened
+    assert dlg.error_label.text()                   # validation message shown
+    assert dlg.result() != QDialog.DialogCode.Accepted
+    dlg.reject()
+
+
+def test_four_file_comparison_warns(window, tmp_path):
+    # X7: a 4th file path is dropped, but with a warning (not silently).
+    paths = []
+    for i in range(4):
+        p = tmp_path / f"f{i}.txt"
+        p.write_text(f"content {i}\n")
+        paths.append(str(p))
+    view = window.append_filediff(paths)
+    assert view is not None and view.num_panes == 3   # first 3 compared
 
 
 def test_dirdiff_activate_one_sided_file_opens_tab(window, tmp_path):
