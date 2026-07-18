@@ -96,6 +96,7 @@ class DirDiffView(QWidget):
         self._mode = "light"
         self.name_filters = default_name_filters()   # hide .git/.svn/… by default
         self.regexes = []
+        self.shallow = False
 
         # Cooperative scan state (see _populate/_drive_scan).
         from PyQt6.QtCore import QTimer
@@ -161,18 +162,25 @@ class DirDiffView(QWidget):
         self.state_filters = set(states)
         self.refresh()
 
+    def set_base_name_filters(self, filters):
+        """The name-filter predicates the filter bar layers its globs on top of
+        (the VC-metadata default plus any Preferences File-Filter globs). Set by
+        the shell from prefs; defaults to the VC-metadata filter alone."""
+        self._base_name_filters = list(filters)
+        self.apply_name_filter_text()          # re-layer the bar globs
+
     def apply_name_filter_text(self, text=None):
         """Parse the filter bar's space-separated globs into hide-predicates,
-        combined with the default VC-metadata filter, and re-scan."""
+        layered on the base name filters, and re-scan."""
         import fnmatch
 
         if text is None:
             text = self.filter_edit.text()
         elif self.filter_edit.text() != text:
             self.filter_edit.setText(text)
-        globs = text.split()
-        filters = default_name_filters()
-        for glob in globs:
+        base = getattr(self, "_base_name_filters", None)
+        filters = list(base) if base is not None else default_name_filters()
+        for glob in text.split():
             filters.append(lambda name, g=glob: not fnmatch.fnmatch(name, g))
         self.name_filters = filters
         if self._roots:
@@ -192,7 +200,8 @@ class DirDiffView(QWidget):
         if not self._roots:
             return
         self._scan_entries = []
-        self._scan_gen = walk(self._roots, self.name_filters, self.regexes)
+        self._scan_gen = walk(self._roots, self.name_filters, self.regexes,
+                              shallow=self.shallow)
         self._drive_scan()
 
     def _drive_scan(self):

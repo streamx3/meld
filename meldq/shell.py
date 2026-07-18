@@ -191,6 +191,16 @@ class MeldWindow(QMainWindow):
             "_Refresh", "Ctrl+R", "view-refresh",
             "Rescan the current comparison", self.on_refresh)
 
+        self.action_zoom_in = self._act(
+            "Zoom _In", QKeySequence.StandardKey.ZoomIn, "zoom-in",
+            "Make the text larger", self.on_zoom_in)
+        self.action_zoom_out = self._act(
+            "Zoom _Out", QKeySequence.StandardKey.ZoomOut, "zoom-out",
+            "Make the text smaller", self.on_zoom_out)
+        self.action_zoom_normal = self._act(
+            "_Normal Size", "Ctrl+0", "zoom-original", "Reset the text size",
+            self.on_zoom_normal)
+
         self.action_toolbar_visible = self._act(
             "_Toolbar", None, None, "Show or hide the toolbar",
             lambda checked: setattr(self.prefs, "toolbar_visible", checked),
@@ -248,6 +258,10 @@ class MeldWindow(QMainWindow):
         changes_menu.addAction(self.action_go_to_line)
 
         view_menu = make_menu("view", "_View")
+        view_menu.addAction(self.action_zoom_in)
+        view_menu.addAction(self.action_zoom_out)
+        view_menu.addAction(self.action_zoom_normal)
+        view_menu.addSeparator()
         self._build_theme_menu(view_menu)
         view_menu.addSeparator()
         view_menu.addAction(self.action_toolbar_visible)
@@ -344,18 +358,53 @@ class MeldWindow(QMainWindow):
             self._apply_theme()
 
     def _apply_font_to(self, view):
-        """Apply the current editor prefs (font + tab width) to every pane of
-        `view`."""
-        font = self.prefs.get_current_font()
+        """Apply the current editor prefs (font, tab width, display toggles,
+        zoom) to every pane of `view`, and connect its panes' user-zoom signal
+        once so a Ctrl+scroll propagates app-wide."""
+        p = self.prefs
+        font = p.get_current_font()
         for pane in view.panes:
             pane.set_base_font(font)
-            pane.setTabWidth(int(self.prefs.tab_size))
+            pane.setTabWidth(int(p.tab_size))
+            pane.set_show_line_numbers(p.show_line_numbers)
+            pane.set_syntax_enabled(p.use_syntax_highlighting)
+            pane.set_highlight_current_line(p.highlight_current_line)
+            pane.set_right_margin(p.right_margin_column if p.show_right_margin
+                                  else 0)
+            pane.set_zoom(int(p.zoom))
+            if not getattr(pane, "_zoom_wired", False):
+                pane._zoom_wired = True
+                pane.zoom_changed.connect(self._on_user_zoom)
 
     def _reapply_font(self):
         for i in range(self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, FileDiffView):
                 self._apply_font_to(widget)
+
+    # ----- zoom (one app-wide level) ----------------------------------------
+
+    def _on_user_zoom(self, level):
+        # A pane was zoomed by the user (Ctrl+wheel/keypad); make it the single
+        # app-wide level so all panes of all tabs stay aligned, and persist it.
+        if int(self.prefs.zoom) != int(level):
+            self.prefs.zoom = int(level)        # fires changed('zoom')
+
+    def _apply_zoom_to_all(self):
+        for i in range(self.tabs.count()):
+            widget = self.tabs.widget(i)
+            if isinstance(widget, FileDiffView):
+                for pane in widget.panes:
+                    pane.set_zoom(int(self.prefs.zoom))
+
+    def on_zoom_in(self):
+        self.prefs.zoom = int(self.prefs.zoom) + 1
+
+    def on_zoom_out(self):
+        self.prefs.zoom = int(self.prefs.zoom) - 1
+
+    def on_zoom_normal(self):
+        self.prefs.zoom = 0
 
     # ----- tab helpers ------------------------------------------------------
 
@@ -415,12 +464,28 @@ class MeldWindow(QMainWindow):
         view = DirDiffView(len(dirs))
         view.create_diff.connect(self._on_child_create_diff)
         view.set_theme(self._resolve_mode())
+        self._apply_folder_prefs(view)                   # before the first scan
         default_globs = self.prefs.dirdiff_name_filters
         if default_globs:
-            view.apply_name_filter_text(default_globs)   # before the first scan
+            view.filter_edit.setText(default_globs)      # seed the bar
         view.set_roots(dirs)
         self._add_tab(view, self._diff_title(dirs, labels), "folder")
         return view
+
+    def _apply_folder_prefs(self, view):
+        """Apply the folder-comparison prefs (shallow + the managed File/Text
+        filter lists) to a DirDiff view. The File-Filter globs become the base
+        name filters the view's own filter bar layers onto; the Text-Filter
+        regexes gate the (slow) regex-filtered content compare."""
+        p = self.prefs
+        view.shallow = bool(p.folder_shallow)
+        from meldq.dircompare import default_name_filters
+        base = default_name_filters()
+        for regex in p.enabled_name_filter_regexes():
+            base.append(lambda name, r=regex: not r.match(name))
+        view.set_base_name_filters(base)
+        view.regexes = (p.enabled_text_filter_regexes()
+                        if p.folder_apply_text_filters else [])
 
     def append_vcview(self, location, labels=None):
         view = VcView()
@@ -716,7 +781,8 @@ class MeldWindow(QMainWindow):
                        self.action_next_change, self.action_undo,
                        self.action_redo, self.action_cut, self.action_copy,
                        self.action_paste, self.action_find,
-                       self.action_go_to_line):
+                       self.action_go_to_line, self.action_zoom_in,
+                       self.action_zoom_out, self.action_zoom_normal):
             action.setEnabled(is_filediff)
         self.action_refresh.setEnabled(is_tree)
         self.action_close.setEnabled(view is not None)
@@ -756,16 +822,32 @@ class MeldWindow(QMainWindow):
 
     # ----- prefs / geometry -------------------------------------------------
 
+    _FONT_PREF_KEYS = (
+        "custom_font", "use_custom_font", "tab_size", "show_line_numbers",
+        "use_syntax_highlighting", "highlight_current_line",
+        "show_right_margin", "right_margin_column",
+    )
+    _FOLDER_PREF_KEYS = ("folder_shallow", "folder_apply_text_filters",
+                         "filters", "regexes")
+
     def _on_pref_changed(self, key):
         if key == "theme":
             self._apply_theme()
-        elif key in ("custom_font", "use_custom_font", "tab_size"):
+        elif key == "zoom":
+            self._apply_zoom_to_all()
+        elif key in self._FONT_PREF_KEYS:
             self._reapply_font()
         elif key == "dirdiff_name_filters":
             for i in range(self.tabs.count()):
                 widget = self.tabs.widget(i)
                 if isinstance(widget, DirDiffView):
                     widget.apply_name_filter_text(self.prefs.dirdiff_name_filters)
+        elif key in self._FOLDER_PREF_KEYS:
+            for i in range(self.tabs.count()):
+                widget = self.tabs.widget(i)
+                if isinstance(widget, DirDiffView):
+                    self._apply_folder_prefs(widget)
+                    widget.refresh()
         elif key == "toolbar_visible":
             self.toolbar.setVisible(bool(self.prefs.toolbar_visible))
             self.action_toolbar_visible.setChecked(bool(self.prefs.toolbar_visible))
@@ -895,10 +977,78 @@ class PatchDialog(QDialog):
                     self, "Meld", _("Could not save patch: %s") % exc)
 
 
+class FilterListWidget(QWidget):
+    """An add/remove/edit table of (enabled, name, pattern) filter rows — the
+    File-Filter and Text-Filter lists from GTK Meld's Preferences. entries()
+    returns the current rows in the prefs "label\\t{0|1}\\tpattern" order."""
+
+    def __init__(self, entries, pattern_header, parent=None):
+        super().__init__(parent)
+        from PyQt6.QtWidgets import (
+            QAbstractItemView,
+            QHeaderView as _QHeaderView,
+            QPushButton,
+            QTableWidget,
+            QTableWidgetItem,
+        )
+        self._TableWidgetItem = QTableWidgetItem
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(
+            [_("On"), _("Name"), pattern_header])
+        self.table.horizontalHeader().setSectionResizeMode(
+            2, _QHeaderView.ResizeMode.Stretch)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        for label, enabled, pattern in entries:
+            self._add_row(label, enabled, pattern)
+
+        add_btn = QPushButton(_("Add"))
+        add_btn.clicked.connect(lambda: self._add_row(_("New filter"), True, ""))
+        rm_btn = QPushButton(_("Remove"))
+        rm_btn.clicked.connect(self._remove_selected)
+        btns = QHBoxLayout()
+        btns.addWidget(add_btn)
+        btns.addWidget(rm_btn)
+        btns.addStretch(1)
+
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.addWidget(self.table, 1)
+        box.addLayout(btns)
+
+    def _add_row(self, label, enabled, pattern):
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        check = self._TableWidgetItem()
+        check.setCheckState(Qt.CheckState.Checked if enabled
+                            else Qt.CheckState.Unchecked)
+        check.setFlags((check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                       & ~Qt.ItemFlag.ItemIsEditable)
+        self.table.setItem(r, 0, check)
+        self.table.setItem(r, 1, self._TableWidgetItem(label))
+        self.table.setItem(r, 2, self._TableWidgetItem(pattern))
+
+    def _remove_selected(self):
+        rows = sorted({i.row() for i in self.table.selectedIndexes()},
+                      reverse=True)
+        for r in rows:
+            self.table.removeRow(r)
+
+    def entries(self):
+        out = []
+        for r in range(self.table.rowCount()):
+            enabled = self.table.item(r, 0).checkState() == Qt.CheckState.Checked
+            name = (self.table.item(r, 1).text() or "").replace("\t", " ")
+            pattern = self.table.item(r, 2).text() or ""
+            if pattern.strip():
+                out.append((name, enabled, pattern))
+        return out
+
+
 class PreferencesDialog(QDialog):
-    """Editor font / tab width, theme, and default DirDiff filters. Values are
-    written to prefs on OK; the shell reacts through the prefs.changed signal
-    (built in code, project convention)."""
+    """Editor, Display, Folder-Comparison, and File/Text filter settings.
+    Values are written to prefs on OK; the shell reacts through the
+    prefs.changed signal (built in code, project convention)."""
 
     def __init__(self, window):
         super().__init__(window)
@@ -911,17 +1061,18 @@ class PreferencesDialog(QDialog):
         )
 
         self.prefs = window.prefs
+        p = self.prefs
         self.setWindowTitle(_("Preferences"))
-        self.setMinimumWidth(420)
+        self.setMinimumSize(520, 420)
         tabs = _QTabWidget()
 
         # --- Editor -------------------------------------------------------
         editor_tab = QWidget()
         form = QFormLayout(editor_tab)
         self.use_custom = QCheckBox(_("Use a custom font"))
-        self.use_custom.setChecked(bool(self.prefs.use_custom_font))
+        self.use_custom.setChecked(bool(p.use_custom_font))
         current = QFont()
-        current.fromString(self.prefs.custom_font)
+        current.fromString(p.custom_font)
         self.font_combo = QFontComboBox()
         self.font_combo.setCurrentFont(current)
         self.size_spin = QSpinBox()
@@ -933,11 +1084,28 @@ class PreferencesDialog(QDialog):
         self.use_custom.toggled.connect(self.size_spin.setEnabled)
         self.tab_spin = QSpinBox()
         self.tab_spin.setRange(1, 16)
-        self.tab_spin.setValue(int(self.prefs.tab_size))
+        self.tab_spin.setValue(int(p.tab_size))
+        self.line_numbers = QCheckBox(_("Show line numbers"))
+        self.line_numbers.setChecked(bool(p.show_line_numbers))
+        self.syntax = QCheckBox(_("Use syntax highlighting"))
+        self.syntax.setChecked(bool(p.use_syntax_highlighting))
+        self.hl_line = QCheckBox(_("Highlight the current line"))
+        self.hl_line.setChecked(bool(p.highlight_current_line))
+        self.right_margin = QCheckBox(_("Show right margin at column"))
+        self.right_margin.setChecked(bool(p.show_right_margin))
+        self.margin_col = QSpinBox()
+        self.margin_col.setRange(1, 400)
+        self.margin_col.setValue(int(p.right_margin_column))
+        self.margin_col.setEnabled(self.right_margin.isChecked())
+        self.right_margin.toggled.connect(self.margin_col.setEnabled)
         form.addRow(self.use_custom)
         form.addRow(_("Font"), self.font_combo)
         form.addRow(_("Size"), self.size_spin)
         form.addRow(_("Tab width"), self.tab_spin)
+        form.addRow(self.line_numbers)
+        form.addRow(self.syntax)
+        form.addRow(self.hl_line)
+        form.addRow(self.right_margin, self.margin_col)
         tabs.addTab(editor_tab, _("Editor"))
 
         # --- Display ------------------------------------------------------
@@ -947,18 +1115,34 @@ class PreferencesDialog(QDialog):
         for value, label in MeldWindow._THEME_CHOICES:
             self.theme_combo.addItem(_(label), value)
         self.theme_combo.setCurrentIndex(
-            max(0, self.theme_combo.findData(self.prefs.theme)))
+            max(0, self.theme_combo.findData(p.theme)))
         display_form.addRow(_("Theme"), self.theme_combo)
         tabs.addTab(display_tab, _("Display"))
 
         # --- Folder comparison -------------------------------------------
         folder_tab = QWidget()
         folder_form = QFormLayout(folder_tab)
-        self.filter_edit = QLineEdit(self.prefs.dirdiff_name_filters)
+        self.filter_edit = QLineEdit(p.dirdiff_name_filters)
         self.filter_edit.setPlaceholderText(
             _("Globs to hide, space-separated (e.g. *.pyc build)"))
+        self.shallow = QCheckBox(
+            _("Compare files based only on size and timestamp"))
+        self.shallow.setChecked(bool(p.folder_shallow))
+        self.apply_text_filters = QCheckBox(
+            _("Apply text filters during folder comparisons"))
+        self.apply_text_filters.setChecked(bool(p.folder_apply_text_filters))
         folder_form.addRow(_("Hide names"), self.filter_edit)
+        folder_form.addRow(self.shallow)
+        folder_form.addRow(self.apply_text_filters)
         tabs.addTab(folder_tab, _("Folder Comparison"))
+
+        # --- File Filters / Text Filters ---------------------------------
+        self.file_filters = FilterListWidget(
+            p.filter_entries("filters"), _("File name globs"))
+        tabs.addTab(self.file_filters, _("File Filters"))
+        self.text_filters = FilterListWidget(
+            p.filter_entries("regexes"), _("Regular expression"))
+        tabs.addTab(self.text_filters, _("Text Filters"))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -978,8 +1162,17 @@ class PreferencesDialog(QDialog):
         font.setPointSize(self.size_spin.value())
         p.custom_font = font.toString()
         p.tab_size = self.tab_spin.value()
+        p.show_line_numbers = self.line_numbers.isChecked()
+        p.use_syntax_highlighting = self.syntax.isChecked()
+        p.highlight_current_line = self.hl_line.isChecked()
+        p.show_right_margin = self.right_margin.isChecked()
+        p.right_margin_column = self.margin_col.value()
         p.theme = self.theme_combo.currentData()
         p.dirdiff_name_filters = self.filter_edit.text()
+        p.folder_shallow = self.shallow.isChecked()
+        p.folder_apply_text_filters = self.apply_text_filters.isChecked()
+        p.set_filter_entries("filters", self.file_filters.entries())
+        p.set_filter_entries("regexes", self.text_filters.entries())
         super().accept()
 
 

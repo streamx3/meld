@@ -736,3 +736,25 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   Recommended: promote the managed **File/Text filter lists** and the **editor
   display toggles** (line numbers, whitespace, wrap, right margin) next — they
   are the highest-value gaps versus upstream.
+
+## Settings expansion + zoom fix (2026-07-18)
+
+- **Zoom fixed.** One app-wide zoom level (`zoom` pref) applied to every pane of
+  every FileDiff tab; a user Ctrl+scroll on any pane (Scintilla SCN_ZOOM →
+  `zoom_changed`) propagates to all panes and persists. View ▸ Zoom In / Out /
+  Normal (platform shortcuts + Ctrl+0). No more per-pane/per-tab desync.
+- **Preferences expanded** to five tabs, porting the bulk of GTK Meld's:
+  - Editor: font, tab width, **line numbers**, **syntax highlighting on/off**,
+    **highlight current line**, **right-margin guide** — all live-applied.
+  - Display: theme.
+  - Folder Comparison: default hide-globs, **shallow (size+mtime) compare**,
+    **apply text filters** toggle.
+  - **File Filters** and **Text Filters**: managed add/remove/enable tables
+    (`FilterListWidget`), stored in the existing `filters`/`regexes` prefs; the
+    enabled File-Filter globs become DirDiff's base name filters (the filter bar
+    layers on top), and Text-Filter regexes feed the content compare when
+    "apply text filters" is on. Live-applied to open folder tabs.
+  - Also flipped the stale `show_line_numbers`/`use_syntax_highlighting` defaults
+    from 0→True to match what the editor actually shows.
+- Still open: external-editor command, overview-map style, VC commit-wrap/merge
+  order, visible size/mtime columns, per-pane chunkmaps.

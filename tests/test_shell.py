@@ -591,3 +591,86 @@ def test_go_to_line(window, two_files):
     assert view.panes[0].getCursorPosition() == (2, 0)
     assert view.go_to_line(9999) == view.panes[0].lines() - 1   # clamped
     assert window.action_go_to_line.isEnabled()
+
+
+# ----- zoom (one app-wide level) --------------------------------------------
+
+def test_zoom_is_app_wide_and_syncs_panes(window, two_files):
+    v1 = window.append_filediff(list(two_files))
+    a2 = _write(__import__("pathlib").Path(v1.path(0)).parent / "c.txt", "x\n")
+    v2 = window.append_filediff([a2, v1.path(1)])
+    window.on_zoom_in()
+    window.on_zoom_in()                             # zoom = 2
+    assert window.prefs.zoom == 2
+    for v in (v1, v2):
+        for pane in v.panes:
+            assert pane.SendScintilla(pane.SCI_GETZOOM) == 2   # every pane, every tab
+    window.on_zoom_normal()
+    assert all(p.SendScintilla(p.SCI_GETZOOM) == 0
+               for v in (v1, v2) for p in v.panes)
+
+
+def test_user_pane_zoom_propagates(window, two_files):
+    v = window.append_filediff(list(two_files))
+    v.panes[0].zoomTo(3)                            # simulate Ctrl+scroll on one pane
+    v.panes[0].zoom_changed.emit(3)                 # the signal Scintilla would emit
+    assert window.prefs.zoom == 3
+    assert v.panes[1].SendScintilla(v.panes[1].SCI_GETZOOM) == 3   # sibling caught up
+
+
+# ----- editor display prefs -------------------------------------------------
+
+def test_editor_display_prefs_apply(window, two_files):
+    v = window.append_filediff(list(two_files))
+    window.prefs.show_line_numbers = False
+    assert v.panes[0].marginWidth(0) == 0
+    window.prefs.show_line_numbers = True
+    assert v.panes[0].marginWidth(0) > 0
+    from PyQt6.Qsci import QsciScintilla
+    window.prefs.show_right_margin = True
+    window.prefs.right_margin_column = 100
+    assert v.panes[0].edgeColumn() == 100
+    assert v.panes[0].edgeMode() != QsciScintilla.EdgeMode.EdgeNone
+
+
+def test_syntax_toggle_off_drops_lexer(window, tmp_path):
+    a = _write(tmp_path / "a.py", "x = 1\n")
+    b = _write(tmp_path / "b.py", "x = 2\n")
+    v = window.append_filediff([a, b])
+    assert v.panes[0].lexer() is not None           # python lexer on by default
+    window.prefs.use_syntax_highlighting = False
+    assert v.panes[0].lexer() is None
+
+
+# ----- managed filter lists + folder prefs ----------------------------------
+
+def test_file_filter_list_hides_matching_names(window, tmp_path):
+    window.prefs.set_filter_entries(
+        "filters", [("Objects", True, "*.o *.obj")])
+    left, right = tmp_path / "l", tmp_path / "r"
+    for d in (left, right):
+        d.mkdir()
+        (d / "keep.c").write_text("x")
+        (d / "junk.o").write_text("x")
+    view = window.append_dirdiff([str(left), str(right)])
+    from tests.test_dirdiff_view import top_rows
+    rows = top_rows(view)
+    assert "keep.c" in rows and "junk.o" not in rows
+
+
+def test_shallow_pref_applies(window, tmp_path):
+    window.prefs.folder_shallow = True
+    left, right = tmp_path / "l", tmp_path / "r"
+    for d in (left, right):
+        d.mkdir()
+    # same size + mtime but different content -> shallow reports NORMAL
+    import os
+    (left / "f.txt").write_bytes(b"AAA")
+    (right / "f.txt").write_bytes(b"BBB")
+    t = 1_600_000_000
+    os.utime(left / "f.txt", (t, t))
+    os.utime(right / "f.txt", (t, t))
+    view = window.append_dirdiff([str(left), str(right)])
+    from meldq.dircompare import STATE_NORMAL
+    from tests.test_dirdiff_view import top_rows
+    assert view.row_state(top_rows(view)["f.txt"], 0) == STATE_NORMAL

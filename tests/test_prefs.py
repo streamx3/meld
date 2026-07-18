@@ -93,3 +93,26 @@ def test_custom_font_falls_back_to_fixed_family(qapp, settings):
             QFontDatabase.SystemFont.FixedFont).family()
     else:
         assert f.family()               # platform has a real monospace family
+
+
+def test_filter_entries_roundtrip(settings):
+    p = Preferences(settings)
+    p.set_filter_entries("filters", [("Backups", True, "*~ *.bak"),
+                                     ("Media", False, "*.png")])
+    entries = p.filter_entries("filters")
+    assert entries == [("Backups", True, "*~ *.bak"), ("Media", False, "*.png")]
+    # only the enabled entry's globs compile into name-hide regexes
+    regexes = p.enabled_name_filter_regexes()
+    assert any(r.match("foo~") for r in regexes)
+    assert any(r.match("x.bak") for r in regexes)
+    assert not any(r.match("x.png") for r in regexes)   # Media disabled
+
+
+def test_enabled_text_filter_regexes_skips_invalid(settings):
+    p = Preferences(settings)
+    p.set_filter_entries("regexes", [("Good", True, "#.*"),
+                                     ("Bad", True, "([unclosed"),
+                                     ("Off", False, "x")])
+    regexes = p.enabled_text_filter_regexes()
+    assert len(regexes) == 1                          # bad skipped, off skipped
+    assert regexes[0].search("code # comment")

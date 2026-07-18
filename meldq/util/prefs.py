@@ -93,8 +93,8 @@ DEFAULTS = {
     "custom_font": Value(STRING, "monospace,14"),
     "tab_size": Value(INT, 4),
     "spaces_instead_of_tabs": Value(BOOL, False),
-    "show_line_numbers": Value(BOOL, 0),
-    "use_syntax_highlighting": Value(BOOL, 0),
+    "show_line_numbers": Value(BOOL, True),
+    "use_syntax_highlighting": Value(BOOL, True),
     "edit_wrap_lines": Value(INT, 0),
     "edit_command_type": Value(STRING, "internal"),   # internal, custom
     "edit_command_custom": Value(STRING, "gedit"),
@@ -142,6 +142,16 @@ DEFAULTS = {
     # Default DirDiff name-filter globs (space-separated, e.g. "*.pyc build"),
     # pre-loaded into every new folder comparison's filter bar.
     "dirdiff_name_filters": Value(STRING, ""),
+    # One app-wide editor zoom level (Scintilla points delta), applied to every
+    # pane of every tab — per-pane zoom desyncs line heights and the linkmap.
+    "zoom": Value(INT, 0),
+    "highlight_current_line": Value(BOOL, True),
+    "show_right_margin": Value(BOOL, False),
+    "right_margin_column": Value(INT, 80),
+    # Folder comparisons: shallow = size+mtime only (no content read);
+    # apply_text_filters gates the (slow) regex-filtered content compare.
+    "folder_shallow": Value(BOOL, False),
+    "folder_apply_text_filters": Value(BOOL, False),
 }
 
 
@@ -287,6 +297,52 @@ class Preferences(QObject):
 
     def get_default(self, name):
         return self._values[name].default
+
+    # ----- filter lists (the 1.4 "label\t{0|1}\tpattern" line format) -------
+
+    def filter_entries(self, key):
+        """[(label, enabled, pattern)] parsed from the `key` pref ("filters"
+        for name globs, "regexes" for content regexes)."""
+        out = []
+        for line in getattr(self, key).split("\n"):
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                out.append((parts[0], parts[1] == "1", "\t".join(parts[2:])))
+        return out
+
+    def set_filter_entries(self, key, entries):
+        setattr(self, key, "\n".join(
+            "%s\t%d\t%s" % (label, 1 if enabled else 0, pattern)
+            for label, enabled, pattern in entries))
+
+    def enabled_name_filter_regexes(self):
+        """Compiled regexes matching file names to HIDE in folder comparisons
+        (each enabled "filters" entry is a space-separated shell-glob list,
+        brace sets included — hence shell_to_regex, not fnmatch)."""
+        from meldq.util.misc import shell_to_regex
+        out = []
+        for _label, enabled, patterns in self.filter_entries("filters"):
+            if not enabled:
+                continue
+            for glob in patterns.split():
+                try:
+                    out.append(re.compile(shell_to_regex(glob)))
+                except re.error:
+                    continue
+        return out
+
+    def enabled_text_filter_regexes(self):
+        """Compiled content regexes from the enabled "regexes" entries (invalid
+        patterns are skipped)."""
+        out = []
+        for _label, enabled, pattern in self.filter_entries("regexes"):
+            if not enabled:
+                continue
+            try:
+                out.append(re.compile(pattern, re.MULTILINE))
+            except re.error:
+                continue
+        return out
 
     def get_current_font(self):
         if self.use_custom_font:

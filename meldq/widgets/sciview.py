@@ -56,6 +56,7 @@ class Theme:
     conflict_bg: str
     inline_bg: str
     selection_bg: str
+    caret_line_bg: str = "#f6f8fa"
 
     def bg_for(self, kind):
         return (self.delete_bg, self.insert_bg,
@@ -66,10 +67,12 @@ class Theme:
 # (github/github-vscode-theme, MIT — and colour values are not copyrightable).
 LIGHT = Theme(name="light", paper="#ffffff", text="#1f2328",
               delete_bg="#ffebe9", insert_bg="#e6ffec", replace_bg="#ddf4ff",
-              conflict_bg="#fff8c5", inline_bg="#8fb6e1", selection_bg="#cce5ff")
+              conflict_bg="#fff8c5", inline_bg="#8fb6e1", selection_bg="#cce5ff",
+              caret_line_bg="#f6f8fa")
 DARK = Theme(name="dark", paper="#0d1117", text="#e6edf3",
              delete_bg="#4b2225", insert_bg="#143d28", replace_bg="#16324f",
-             conflict_bg="#3d3115", inline_bg="#3a5a80", selection_bg="#2d4f76")
+             conflict_bg="#3d3115", inline_bg="#3a5a80", selection_bg="#2d4f76",
+             caret_line_bg="#161b22")
 
 # Syntax token foreground per theme (GitHub Default Light/Dark). Roles are
 # matched to each QScintilla lexer's per-style *description* (lexer-agnostic).
@@ -151,6 +154,7 @@ class MeldSciView(QsciScintilla):
     scrolled = pyqtSignal()             # vertical scroll changed (drives sync-scroll)
     action_clicked = pyqtSignal(int)    # merge arrow clicked at this line
     action_shift_clicked = pyqtSignal(int)   # Shift+click: reverse-direction merge
+    zoom_changed = pyqtSignal(int)      # USER zoomed this pane (Ctrl+wheel/keypad)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -192,6 +196,13 @@ class MeldSciView(QsciScintilla):
         self.SendScintilla(self.SCI_CLEARCMDKEY,
                            ord("D") | (self.SCMOD_CTRL << 16))
 
+        # Zoom sync: Scintilla zooms each instance independently (Ctrl+wheel /
+        # keypad ±), which desyncs pane line heights. Surface every user zoom
+        # via zoom_changed so the shell can apply ONE level app-wide;
+        # set_zoom applies silently (no echo, no feedback loop).
+        self._applying_zoom = False
+        self.SCN_ZOOM.connect(self._on_scn_zoom)
+
         self.apply_theme(LIGHT)
         self.verticalScrollBar().valueChanged.connect(
             lambda _v: self.scrolled.emit())
@@ -201,8 +212,25 @@ class MeldSciView(QsciScintilla):
     def _update_margin_width(self):
         """Size the line-number margin to the document's line count (was fixed
         at 5 digits, truncating numbers in >99,999-line files)."""
+        if not getattr(self, "_show_line_numbers", True):
+            self.setMarginWidth(0, 0)
+            return
         digits = max(5, len(str(max(1, self.lines()))))
         self.setMarginWidth(0, "0" * (digits + 1))
+
+    # ----- zoom (one app-wide level; see shell) -----------------------------
+
+    def _on_scn_zoom(self):
+        if not self._applying_zoom:
+            self.zoom_changed.emit(self.SendScintilla(self.SCI_GETZOOM))
+
+    def set_zoom(self, level):
+        """Apply `level` without re-emitting zoom_changed."""
+        self._applying_zoom = True
+        try:
+            self.zoomTo(int(level))
+        finally:
+            self._applying_zoom = False
 
     def set_base_font(self, font):
         """Set the editor font across every style (overriding the lexers'
@@ -219,6 +247,7 @@ class MeldSciView(QsciScintilla):
         paper, text = QColor(theme.paper), QColor(theme.text)
         self.setColor(text)                     # governs plain (un-lexed) text
         self.setPaper(paper)
+        self.setCaretLineBackgroundColor(QColor(theme.caret_line_bg))
         self.setMarginsBackgroundColor(paper)
         self.setMarginsForegroundColor(text)
         self.setSelectionBackgroundColor(QColor(theme.selection_bg))
@@ -294,9 +323,46 @@ class MeldSciView(QsciScintilla):
         self.endUndoAction()
         self.scroll_to_line(first_visible)
 
+    # ----- editor display prefs ---------------------------------------------
+
+    def set_show_line_numbers(self, on):
+        self._show_line_numbers = bool(on)
+        self._update_margin_width()
+
+    def set_show_whitespace(self, on):
+        self.setWhitespaceVisibility(
+            QsciScintilla.WhitespaceVisibility.WsVisible if on
+            else QsciScintilla.WhitespaceVisibility.WsInvisible)
+
+    def set_wrap(self, on):
+        self.setWrapMode(QsciScintilla.WrapMode.WrapWord if on
+                         else QsciScintilla.WrapMode.WrapNone)
+
+    def set_highlight_current_line(self, on):
+        self.setCaretLineVisible(bool(on))
+
+    def set_right_margin(self, column):
+        """Show a vertical guide at `column`; None/0 hides it."""
+        if column:
+            self.setEdgeMode(QsciScintilla.EdgeMode.EdgeLine)
+            self.setEdgeColumn(int(column))
+        else:
+            self.setEdgeMode(QsciScintilla.EdgeMode.EdgeNone)
+
+    def set_syntax_enabled(self, on):
+        """Toggle syntax highlighting (re-deriving the lexer from the last
+        path set via set_language_for)."""
+        on = bool(on)
+        if on != getattr(self, "_syntax_enabled", True):
+            self._syntax_enabled = on
+            self.set_language_for(getattr(self, "_language_path", None))
+
     def set_language_for(self, path):
+        self._language_path = path
         ext = os.path.splitext(path or "")[1].lower()
         factory = _LEXERS.get(ext) or _LEXERS.get(os.path.basename(path or "").lower())
+        if not getattr(self, "_syntax_enabled", True):
+            factory = None
         if factory is None:
             self._lexer = None
             self.setLexer(None)

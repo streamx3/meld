@@ -50,10 +50,10 @@ def _streams_equal(paths, chunk=65536):
             h.close()
 
 
-def files_same(paths, regexes=()):
+def files_same(paths, regexes=(), shallow=False):
     """Tri-state content comparison of existing paths: 1 identical, 2 identical
     only after applying `regexes`, 0 different. All-directories -> 1; a
-    file/dir mix -> 0."""
+    file/dir mix -> 0. `shallow`: compare size + mtime only (no content read)."""
     if len(paths) <= 1:
         return 1
     sigs = [os.stat(p) for p in paths]
@@ -62,6 +62,11 @@ def files_same(paths, regexes=()):
         return 1
     if not all(are_files):              # a file/dir mixture
         return 0
+
+    if shallow:
+        # Same size AND mtime -> assume identical without reading content.
+        sigs_st = {(s.st_size, int(s.st_mtime)) for s in sigs}
+        return 1 if len(sigs_st) == 1 else 0
 
     if not regexes:
         # No filters: different sizes differ; else stream-compare in chunks
@@ -91,7 +96,7 @@ def files_same(paths, regexes=()):
     return 0
 
 
-def entry_states(paths, regexes=()):
+def entry_states(paths, regexes=(), shallow=False):
     """Per-pane states for one name. `paths` is one path per pane (the name
     joined onto each root; the file may or may not exist). Returns
     (states, different)."""
@@ -106,7 +111,7 @@ def entry_states(paths, regexes=()):
         if any(os.path.isdir(p) and not os.access(p, os.R_OK) for p in paths):
             return [STATE_ERROR] * n, True
         try:
-            same = files_same([p for p in paths], regexes)
+            same = files_same([p for p in paths], regexes, shallow=shallow)
         except OSError:
             return [STATE_ERROR] * n, True
         kind = (STATE_NORMAL if same == 1
@@ -174,11 +179,11 @@ class Entry:
             self.relpath, self.isdir, self.states)
 
 
-def walk(roots, name_filters=(), regexes=()):
+def walk(roots, name_filters=(), regexes=(), shallow=False):
     """Yield an :class:`Entry` per name under the parallel `roots`, breadth-
     first (parents before children). `name_filters` are predicates (keep a name
     if all return True); `regexes` are compiled text filters for content
-    comparison."""
+    comparison; `shallow` compares by size+mtime only."""
     todo = [""]                             # relpaths of directories to expand
     visited = set()                         # real paths already expanded
     case_insensitive = any(_is_case_insensitive(r) for r in roots)
@@ -203,7 +208,7 @@ def walk(roots, name_filters=(), regexes=()):
             child_rel = os.path.join(rel, name) if rel else name
             paths = [os.path.join(dp, name) for dp in dir_paths]
             isdir = any(os.path.isdir(p) for p in paths)
-            states, different = entry_states(paths, regexes)
+            states, different = entry_states(paths, regexes, shallow=shallow)
             error = STATE_ERROR in states
             yield Entry(child_rel, paths, isdir, states, different, error=error)
             # Don't descend into an unreadable directory: listing it would
