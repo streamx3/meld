@@ -335,6 +335,30 @@ def test_click_empty_margin_is_noop(fd):
     assert fd.panes[1].text() == "a\nX\nY\nb\n"     # right pane untouched
 
 
+def test_reject_mode_restores_original_into_patched_pane(fd):
+    # M6: patch-review layout (left read-only original, right editable patched).
+    # A gutter click rejects the hunk: restores the original into the right pane,
+    # never writes the read-only left pane.
+    original = "a\nb\nc\nd\ne\n"
+    patched = "a\nBEE\nc\nd\nEEE\n"        # two separated changes: b->BEE, e->EEE
+    fd.set_texts([original, patched])
+    fd.panes[0].setReadOnly(True)
+    assert fd._is_reject_mode()
+    # reject the first change (line 1): only that chunk reverts, not the whole file
+    fd.panes[1].action_clicked.emit(1)
+    assert fd.panes[1].text() == "a\nb\nc\nd\nEEE\n"   # b restored, EEE kept
+    assert fd.panes[0].text() == original             # original untouched
+
+
+def test_reject_mode_removes_an_inserted_hunk(fd):
+    fd.set_texts(["a\nb\n", "a\nINS\nb\n"])            # patch inserted INS
+    fd.panes[0].setReadOnly(True)
+    # the insert arrow sits on the patched (right) pane
+    line = next(ln for ln in range(3) if fd.panes[1].has_action_marker(ln))
+    fd.panes[1].action_clicked.emit(line)
+    assert fd.panes[1].text() == "a\nb\n"             # inserted hunk rejected
+
+
 def test_click_empty_margin_unchanged_line_is_noop(fd):
     fd.set_texts(["a\nOLD\nb\n", "a\nNEW\nb\n"])
     before = (fd.panes[0].text(), fd.panes[1].text())

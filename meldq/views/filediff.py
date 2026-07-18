@@ -621,6 +621,15 @@ class FileDiffView(QWidget):
         seg = self._pane_lines(pane)[this_lo:this_hi]
         self.panes[1].replace_line_range(base_lo, base_hi, seg)
 
+    def _is_reject_mode(self):
+        """A 2-way view whose left pane is read-only and right pane editable —
+        the patch-review layout (original vs patched). Here a gutter click
+        *rejects* the hunk: it restores the original (left) into the patched
+        (right) pane, rather than merging into the read-only left pane."""
+        return (self.num_panes == 2
+                and self.panes[0].isReadOnly()
+                and not self.panes[1].isReadOnly())
+
     def _on_action(self, pane, line):
         # Merge arrow clicked. 2-way: send that pane's side to the other pane.
         # 3-way: an outer pane sends its side into the base (pane 1).
@@ -632,7 +641,12 @@ class FileDiffView(QWidget):
             return
         if self.num_panes == 2:
             chunk = self.chunk_at_line(pane, line)
-            if chunk is not None:
+            if chunk is None:
+                return
+            if self._is_reject_mode():
+                # Reject this hunk: restore the original into the patched pane.
+                self.copy_chunk(chunk, src_pane=0, dst_pane=1)
+            else:
                 self.copy_chunk(chunk, src_pane=pane, dst_pane=1 - pane)
         elif pane != 1:
             chunk = self.outer_chunk_at_line(pane, line)

@@ -341,8 +341,6 @@ items are independent unless noted.
 4 skipped, across 33 fix commits (one per unit, each with a regression test).
 
 **Explicitly deferred (documented, not fixed):**
-- **M6** — merging into a read-only pane no-ops; the real fix is a patch-review
-  "reject hunk" control (a feature, not a mechanical fix).
 - **PF2 tail** — cooperative-generator rewrite for a single pathological diff
   (the per-keystroke case is fixed by debounce); was already on the deferred list.
 - Per-plan deferrals: filter UI, chunkmap overview, DirDiff size/mtime
@@ -353,6 +351,8 @@ items are independent unless noted.
   stays aligned across panes of unequal length instead of drifting.
 - D7 — case-only duplicate rows collapse on a case-insensitive FS (macOS).
 - X5 — sibling history combos no longer clobber a shared history_id.
+- M6 — patch-review gutter clicks now REJECT a hunk (restore the original into
+  the patched pane); the read-only original is never written.
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.
