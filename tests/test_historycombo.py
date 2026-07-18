@@ -133,3 +133,18 @@ def test_set_filename_no_history(qapp, settings):
     fhc.set_filename("/some/file")
     assert fhc.combo.count() == before
     assert fhc.combo.currentText() == "/some/file"
+
+
+def test_sibling_combos_dont_clobber_shared_history(qapp, tmp_path):
+    # X5: two combos sharing a history_id (e.g. New-Comparison file rows) must
+    # both persist — the last save used to overwrite the sibling's entries.
+    from PyQt6.QtCore import QSettings
+    from meldq.widgets.historycombo import HistoryCombo
+    s = QSettings(str(tmp_path / "h.ini"), QSettings.Format.IniFormat)
+    a = HistoryCombo("shared", s)
+    b = HistoryCombo("shared", s)          # constructed with the same (empty) list
+    a.prepend_text("aaaa-path")
+    b.prepend_text("bbbb-path")            # used to clobber aaaa-path
+    persisted = [str(x) for x in s.value("history/shared")]
+    assert "aaaa-path" in persisted
+    assert "bbbb-path" in persisted

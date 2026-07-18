@@ -67,6 +67,24 @@ class HistoryCombo(QComboBox):
             return
         if len(text) <= MIN_ITEM_LEN:      # must be LONGER than 3 chars (:95)
             return
+        key = self._settings_key()
+        if key is not None:
+            # Settings-authoritative: build on the CURRENTLY persisted list, not
+            # this combo's (possibly stale) in-memory items. Otherwise sibling
+            # combos sharing a history_id — the three New-Comparison file rows —
+            # each save their own list and the last writer clobbers the rest.
+            items = [i for i in _as_str_list(self._settings.value(key))
+                     if i != text]
+            items.insert(0, text)
+            items = items[:self._history_length]
+            self._settings.setValue(key, items)
+            edited = self.lineEdit().text()
+            self.clear()
+            for item in items:
+                self.addItem(item)
+            self.lineEdit().setText(edited)
+            return
+        # No persistence: just update the combo in place.
         edited = self.lineEdit().text()    # insertItem shifts the line edit
         existing = self.findText(
             text, Qt.MatchFlag.MatchFixedString | Qt.MatchFlag.MatchCaseSensitive)
@@ -77,7 +95,6 @@ class HistoryCombo(QComboBox):
                 self.removeItem(self.count() - 1)
         self.insertItem(0, text)
         self.lineEdit().setText(edited)
-        self._save_history()
 
     def set_history_length(self, n):
         if n <= 0:
