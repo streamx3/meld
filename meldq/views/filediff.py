@@ -171,6 +171,8 @@ class FileDiffView(QWidget):
                 lambda p=pane: self._on_text_changed(p))      # live re-diff
             view.action_clicked.connect(
                 lambda line, p=pane: self._on_action(p, line))
+            view.action_shift_clicked.connect(
+                lambda line, p=pane: self._on_action_reverse(p, line))
 
     # ----- loading ----------------------------------------------------------
 
@@ -621,6 +623,14 @@ class FileDiffView(QWidget):
         seg = self._pane_lines(pane)[this_lo:this_hi]
         self.panes[1].replace_line_range(base_lo, base_hi, seg)
 
+    def copy_from_base(self, pane, chunk):
+        """[3-way] the reverse merge: replace outer `pane`'s side of `chunk`
+        with the base's (pane 1) lines — i.e. discard this side's change and
+        take the base's version (undoable)."""
+        this_lo, this_hi, base_lo, base_hi = chunk[1], chunk[2], chunk[3], chunk[4]
+        seg = self._pane_lines(1)[base_lo:base_hi]
+        self.panes[pane].replace_line_range(this_lo, this_hi, seg)
+
     def _is_reject_mode(self):
         """A 2-way view whose left pane is read-only and right pane editable —
         the patch-review layout (original vs patched). Here a gutter click
@@ -652,6 +662,26 @@ class FileDiffView(QWidget):
             chunk = self.outer_chunk_at_line(pane, line)
             if chunk is not None:
                 self.copy_to_base(pane, chunk)
+
+    def _on_action_reverse(self, pane, line):
+        # Shift+click on a merge arrow: the reverse-direction merge.
+        # 3-way outer pane: take the BASE's version into this pane (discard this
+        # side's change). 2-way: pull the other pane's version into the clicked
+        # pane. Reject-mode (patch review) keeps its reject semantics.
+        if not self.panes[pane].has_action_marker(line):
+            return
+        if self.num_panes == 2:
+            chunk = self.chunk_at_line(pane, line)
+            if chunk is None:
+                return
+            if self._is_reject_mode():
+                self.copy_chunk(chunk, src_pane=0, dst_pane=1)
+            else:
+                self.copy_chunk(chunk, src_pane=1 - pane, dst_pane=pane)
+        elif pane != 1:
+            chunk = self.outer_chunk_at_line(pane, line)
+            if chunk is not None:
+                self.copy_from_base(pane, chunk)
 
     # ----- navigation -------------------------------------------------------
 

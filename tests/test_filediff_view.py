@@ -428,3 +428,11 @@ def test_small_file_rediff_is_synchronous(fd):
     fd.set_texts(["a\nb\n", "a\nb\n"])
     fd.panes[0].append("c\n")
     assert not fd._rediff_timer.isActive()         # small file: immediate
+
+
+def test_shift_click_pulls_other_side_into_clicked_pane(fd):
+    # 2-way reverse merge: Shift+click pulls the OTHER pane's version in.
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[0].action_shift_clicked.emit(1)
+    assert fd.panes[0].text() == "a\nRIGHT\nb\n"     # left took right's line
+    assert fd.panes[1].text() == "a\nRIGHT\nb\n"     # right untouched

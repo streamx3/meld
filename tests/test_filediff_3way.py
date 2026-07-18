@@ -137,3 +137,20 @@ def test_base_inline_marks_against_correct_outer(fd3):
     assert fd3.panes[1].has_inline_at(0, 1)
     assert not fd3.panes[1].has_inline_at(0, 0)      # 'a' unchanged
     assert not fd3.panes[1].has_inline_at(0, 2)      # 'c' unchanged
+
+
+def test_shift_click_takes_base_into_outer(fd3):
+    # base->side merge: Shift+click on an outer arrow discards that side's
+    # change and takes the base's version.
+    fd3.set_texts(["a\nL\nc\n", "a\nx\nc\n", "a\nx\nc\n"])
+    fd3.panes[0].action_shift_clicked.emit(1)
+    assert fd3.panes[0].text() == "a\nx\nc\n"        # left took base's line
+    assert fd3.panes[1].text() == "a\nx\nc\n"        # base untouched
+
+
+def test_shift_click_restores_base_deletion(fd3):
+    # left deleted base's "b"; Shift+click restores it from the base.
+    fd3.set_texts(["a\nc\n", "a\nb\nc\n", "a\nb\nc\n"])
+    line = next(ln for ln in range(3) if fd3.panes[0].has_action_marker(ln))
+    fd3.panes[0].action_shift_clicked.emit(line)
+    assert fd3.panes[0].text() == "a\nb\nc\n"        # deletion undone from base

@@ -16,7 +16,7 @@ Editability is left to the caller (a diff pane may be read-only).
 import os
 from dataclasses import dataclass
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFontDatabase
 from PyQt6.Qsci import (
     QsciLexerBash,
@@ -150,6 +150,7 @@ class MeldSciView(QsciScintilla):
     focus_changed = pyqtSignal(bool)
     scrolled = pyqtSignal()             # vertical scroll changed (drives sync-scroll)
     action_clicked = pyqtSignal(int)    # merge arrow clicked at this line
+    action_shift_clicked = pyqtSignal(int)   # Shift+click: reverse-direction merge
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -349,7 +350,10 @@ class MeldSciView(QsciScintilla):
 
     def _on_margin_clicked(self, margin, line, state):
         if margin == 1:
-            self.action_clicked.emit(line)
+            if state & Qt.KeyboardModifier.ShiftModifier:
+                self.action_shift_clicked.emit(line)
+            else:
+                self.action_clicked.emit(line)
 
     # ----- coordinates / scroll (for LinkMap + sync-scroll) -----------------
 

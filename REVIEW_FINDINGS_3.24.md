@@ -343,7 +343,7 @@ items are independent unless noted.
 **Explicitly deferred (documented, not fixed):**
 - **PF2 tail** — cooperative-generator rewrite for a single pathological diff
   (the per-keystroke case is fixed by debounce); was already on the deferred list.
-- Per-plan deferrals still open: chunkmap overview, 3-way base→side merge,
+- Per-plan deferrals still open: chunkmap overview,
   cooperative-generator scheduler for the single pathological diff.
 
 **Post-completion follow-ups (deferred items now also done):**
@@ -355,6 +355,8 @@ items are independent unless noted.
   the patched pane); the read-only original is never written.
 - DirDiff size/mtime info surfaced as per-cell tooltips (scope-table "size/time").
 - DirDiff name-filter bar (space-separated globs) on top of the .git default.
+- 3-way base→side merge: Shift+click on an outer arrow takes the base's version
+  (2-way Shift+click pulls the other side into the clicked pane).
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.
