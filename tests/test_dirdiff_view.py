@@ -342,3 +342,34 @@ def test_name_filter_bar_keeps_vc_default(dd, tmp_path):
     dd.set_roots([str(left), str(right)])
     dd.apply_name_filter_text("*.tmp")            # unrelated glob
     assert ".git" not in top_rows(dd)             # default VC filter still applies
+
+
+def test_scan_defers_for_slow_walks(dd, tmp_path, qtbot):
+    # Async scan: with a zero slice budget every entry defers to the event loop;
+    # the tree still populates once the timer drains, with a Scanning banner
+    # in between.
+    left, right = tmp_path / "left", tmp_path / "right"
+    for d in (left, right):
+        for i in range(8):
+            write(d / ("f%d.txt" % i), b"x\n")
+    dd._SCAN_SLICE_S = 0                       # force the deferred path
+    dd.set_roots([str(left), str(right)])
+    assert dd._scan_gen is not None            # scan still in flight
+    assert "Scanning" in (dd.infobar.message or "")
+    qtbot.waitUntil(lambda: dd._scan_gen is None, timeout=5000)
+    assert len(top_rows(dd)) == 8              # fully populated afterwards
+    assert dd.infobar.message is None          # banner cleared
+
+
+def test_rescan_cancels_inflight_scan(dd, tmp_path, qtbot):
+    left, right = tmp_path / "left", tmp_path / "right"
+    for d in (left, right):
+        for i in range(5):
+            write(d / ("f%d.txt" % i), b"x\n")
+    dd._SCAN_SLICE_S = 0
+    dd.set_roots([str(left), str(right)])
+    assert dd._scan_gen is not None
+    dd._SCAN_SLICE_S = 10                      # second scan completes inline
+    dd.refresh()                               # cancels + restarts
+    assert dd._scan_gen is None
+    assert len(top_rows(dd)) == 5

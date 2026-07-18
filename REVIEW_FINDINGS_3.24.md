@@ -694,3 +694,5 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   Save writes it, Add marks resolved. End-to-end test with a real merge repo.
 - ✅ P2 (2026-07-18): CI — GitHub Actions workflow (.github/workflows/tests.yml)
   running the offscreen suite on push/PR, py3.11+3.12. Verify on first push.
+- ✅ P3 (2026-07-18): async DirDiff scan — walk() consumed in event-loop slices
+  (first slice inline; "Scanning… (N items)" banner; re-scan cancels in-flight).

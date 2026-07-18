@@ -96,6 +96,17 @@ class DirDiffView(QWidget):
         self._mode = "light"
         self.name_filters = default_name_filters()   # hide .git/.svn/… by default
         self.regexes = []
+
+        # Cooperative scan state (see _populate/_drive_scan).
+        from PyQt6.QtCore import QTimer
+        self._scan_gen = None
+        self._scan_entries = []
+        self._pending_expanded = set()
+        self._pending_auto_expand = False
+        self._scan_timer = QTimer(self)
+        self._scan_timer.setSingleShot(True)
+        self._scan_timer.setInterval(0)
+        self._scan_timer.timeout.connect(self._drive_scan)
         self.state_filters = {STATE_NORMAL, STATE_NEW, STATE_MODIFIED}
 
         self.model = QStandardItemModel()
@@ -167,12 +178,49 @@ class DirDiffView(QWidget):
         if self._roots:
             self.refresh()
 
+    # Seconds of scan work per event-loop slice. The first slice runs inline,
+    # so a small tree still populates synchronously (deterministic for tests);
+    # a huge tree keeps the UI alive with a "Scanning…" banner instead of
+    # freezing for the whole walk.
+    _SCAN_SLICE_S = 0.03
+
     def _populate(self, auto_expand_diffs):
-        expanded = self._expanded_relpaths()
+        self._cancel_scan()
+        self._pending_expanded = self._expanded_relpaths()
+        self._pending_auto_expand = auto_expand_diffs
         self.model.removeRows(0, self.model.rowCount())
         if not self._roots:
             return
-        entries = list(walk(self._roots, self.name_filters, self.regexes))
+        self._scan_entries = []
+        self._scan_gen = walk(self._roots, self.name_filters, self.regexes)
+        self._drive_scan()
+
+    def _drive_scan(self):
+        gen = self._scan_gen
+        if gen is None:
+            return
+        import time
+        deadline = time.monotonic() + self._SCAN_SLICE_S
+        try:
+            while True:
+                self._scan_entries.append(next(gen))
+                if time.monotonic() > deadline:
+                    self.infobar.show_message(
+                        "Scanning… (%d items)" % len(self._scan_entries))
+                    self._scan_timer.start()      # resume next event-loop turn
+                    return
+        except StopIteration:
+            self._scan_gen = None
+            self._finish_populate()
+
+    def _cancel_scan(self):
+        self._scan_gen = None
+        self._scan_timer.stop()
+
+    def _finish_populate(self):
+        entries = self._scan_entries
+        auto_expand_diffs = self._pending_auto_expand
+        expanded = self._pending_expanded
         errored = [e.relpath for e in entries if e.error]
         if errored:
             self.infobar.show_message(
