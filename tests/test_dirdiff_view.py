@@ -303,3 +303,16 @@ def test_vc_metadata_dirs_hidden_by_default(dd, tmp_path):
     rows = top_rows(dd)
     assert ".git" not in rows
     assert "file.txt" in rows
+
+
+def test_size_time_tooltip_on_cells(dd, tmp_path):
+    # size/mtime info is surfaced as a per-cell tooltip.
+    left, right = tmp_path / "left", tmp_path / "right"
+    write(left / "f.txt", b"hello world\n")       # 12 bytes
+    write(right / "f.txt", b"hi\n")
+    dd.set_roots([str(left), str(right)])
+    idx = top_rows(dd)["f.txt"]
+    item = dd.model.itemFromIndex(idx)
+    tip = item.toolTip()
+    assert "Size:" in tip and "Modified:" in tip
+    assert "12 B" in tip                          # left pane's size

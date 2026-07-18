@@ -220,9 +220,32 @@ class DirDiffView(QWidget):
             if entry.states[pane] != STATE_MISSING:
                 item.setText(entry.name)
                 item.setIcon(self._icon(entry.isdir))
+                item.setToolTip(self._size_time_tooltip(entry.paths[pane]))
             self._style(item, entry.states[pane])
             items.append(item)
         return items
+
+    @staticmethod
+    def _size_time_tooltip(path):
+        """Size + modification time for a cell's file (the size/time info the
+        v1 scope calls for, surfaced as a tooltip rather than extra columns)."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return ""
+        import datetime
+        when = datetime.datetime.fromtimestamp(st.st_mtime).strftime(
+            "%Y-%m-%d %H:%M:%S")
+        if os.path.isdir(path):
+            return "Folder\nModified: %s" % when
+        size = st.st_size
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                shown = ("%d %s" % (size, unit) if unit == "B"
+                         else "%.1f %s" % (size, unit))
+                break
+            size /= 1024
+        return "Size: %s\nModified: %s" % (shown, when)
 
     def _style(self, item, state):
         bold, italic, strike = _DECOR.get(state, _DECOR[STATE_NORMAL])

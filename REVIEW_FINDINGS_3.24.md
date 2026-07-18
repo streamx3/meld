@@ -353,6 +353,7 @@ items are independent unless noted.
 - X5 — sibling history combos no longer clobber a shared history_id.
 - M6 — patch-review gutter clicks now REJECT a hunk (restore the original into
   the patched pane); the read-only original is never written.
+- DirDiff size/mtime info surfaced as per-cell tooltips (scope-table "size/time").
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.
