@@ -436,3 +436,24 @@ def test_shift_click_pulls_other_side_into_clicked_pane(fd):
     fd.panes[0].action_shift_clicked.emit(1)
     assert fd.panes[0].text() == "a\nRIGHT\nb\n"     # left took right's line
     assert fd.panes[1].text() == "a\nRIGHT\nb\n"     # right untouched
+
+
+def test_cooperative_rediff_completes_and_renders(fd, qtbot):
+    # PF2: a large-file re-diff runs cooperatively (yields across event-loop
+    # slices) and still renders the change.
+    fd._COOP_SLICE_S = -1                    # force a yield after every step
+    left = "".join("line %d\n" % i for i in range(2500))
+    right = left.replace("line 100\n", "CHANGED\n", 1)
+    fd.set_texts([left, right])
+    assert fd._coop_gen is not None          # deferred, not run all at once
+    qtbot.waitUntil(lambda: fd._coop_gen is None, timeout=10000)
+    assert fd.panes[0].chunk_kinds_at(100)   # the change rendered
+
+
+def test_opcodes_cache_invalidated_on_edit(fd):
+    fd.set_texts(["a\nb\n", "a\nB\n"])
+    first = fd.opcodes()
+    assert fd.opcodes() is first             # cached (same object)
+    fd.panes[1].set_text("a\nb\n")           # now identical -> cache invalidated
+    assert fd.opcodes() != first
+    assert fd.opcodes() == []                # no differences

@@ -137,6 +137,16 @@ class FileDiffView(QWidget):
         self._rediff_timer.setInterval(150)
         self._rediff_timer.timeout.connect(self._recompute)
 
+        # Cooperative re-diff for large documents: the engines expose generator
+        # interfaces that yield periodically, so the O(NP) worst case (same
+        # lines reordered) runs in event-loop slices instead of freezing the UI.
+        self._opcodes_cache = None      # 2-way chunks, invalidated on any edit
+        self._coop_gen = None
+        self._coop_timer = QTimer(self)
+        self._coop_timer.setSingleShot(True)
+        self._coop_timer.setInterval(0)
+        self._coop_timer.timeout.connect(self._drive_coop)
+
         # LinkMaps between adjacent panes: 2-way uses opcodes(), 3-way pair_chunks.
         self.linkmaps = []
         for side in range(num_panes - 1):
@@ -428,10 +438,15 @@ class FileDiffView(QWidget):
         return self.panes[i].text().split("\n")
 
     def opcodes(self):
-        """2-way chunks (tag, left_lo, left_hi, right_lo, right_hi)."""
-        return MyersSequenceMatcher(
-            None, self._pane_lines(0), self._pane_lines(1)
-        ).get_difference_opcodes()
+        """2-way chunks (tag, left_lo, left_hi, right_lo, right_hi). Cached —
+        linkmap paints, gutter clicks, and navigation all consult this, and each
+        used to re-run the full Myers pass; the cache is invalidated on any
+        edit."""
+        if self._opcodes_cache is None:
+            self._opcodes_cache = MyersSequenceMatcher(
+                None, self._pane_lines(0), self._pane_lines(1)
+            ).get_difference_opcodes()
+        return self._opcodes_cache
 
     def pair_chunks(self, side):
         """3-way chunks between adjacent panes `side` and `side+1`, as
@@ -448,12 +463,57 @@ class FileDiffView(QWidget):
                 result.append((tag, chunk[1], chunk[2], chunk[3], chunk[4]))
         return result
 
+    # Seconds of diff work per event-loop slice in the cooperative path. The
+    # first slice runs inline, so a fast diff still completes synchronously.
+    _COOP_SLICE_S = 0.02
+
     def _recompute(self):
+        self._cancel_coop()
+        self._opcodes_cache = None
+        if any(p.lines() > self._LIVE_REDIFF_SYNC_MAX for p in self.panes):
+            self._coop_gen = self._coop_steps()
+            self._drive_coop()          # first slice inline; defers if slow
+        else:
+            self._recompute_sync()
+
+    def _recompute_sync(self):
         if self.num_panes == 3:
             seqs = [self._pane_lines(p) for p in range(3)]
             for _ in self.differ.set_sequences_iter(seqs):
                 pass
         self._render()
+
+    def _coop_steps(self):
+        """Generator performing the full re-diff in resumable steps (the
+        engines yield periodically inside their O(NP) loops)."""
+        if self.num_panes == 3:
+            seqs = [self._pane_lines(p) for p in range(3)]
+            yield from self.differ.set_sequences_iter(seqs)
+        else:
+            matcher = MyersSequenceMatcher(
+                None, self._pane_lines(0), self._pane_lines(1))
+            yield from matcher.initialise()
+            self._opcodes_cache = matcher.get_difference_opcodes()
+
+    def _drive_coop(self):
+        gen = self._coop_gen
+        if gen is None:
+            return
+        import time
+        deadline = time.monotonic() + self._COOP_SLICE_S
+        try:
+            while True:
+                next(gen)
+                if time.monotonic() > deadline:
+                    self._coop_timer.start()    # resume next event-loop turn
+                    return
+        except StopIteration:
+            self._coop_gen = None
+            self._render()
+
+    def _cancel_coop(self):
+        self._coop_gen = None
+        self._coop_timer.stop()
 
     # Above this many lines in any pane, coalesce live re-diffs via the timer
     # rather than running one per keystroke (which is a multi-second stall on
@@ -461,6 +521,7 @@ class FileDiffView(QWidget):
     _LIVE_REDIFF_SYNC_MAX = 2000
 
     def _on_text_changed(self, pane=None):
+        self._opcodes_cache = None          # any edit invalidates cached chunks
         if self._loading:
             return
         if pane is not None:
@@ -485,8 +546,7 @@ class FileDiffView(QWidget):
     def _render_2way(self):
         left, right = self.panes
         left_lines, right_lines = self._pane_lines(0), self._pane_lines(1)
-        for tag, l1, l2, r1, r2 in MyersSequenceMatcher(
-                None, left_lines, right_lines).get_difference_opcodes():
+        for tag, l1, l2, r1, r2 in self.opcodes():
             if tag == "delete":
                 left.add_chunk(l1, l2, KIND_DELETE)
                 left.add_action_marker(l1)          # → send left's lines right
