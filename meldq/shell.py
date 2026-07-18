@@ -191,6 +191,9 @@ class MeldWindow(QMainWindow):
             "_Refresh", "Ctrl+R", "view-refresh",
             "Rescan the current comparison", self.on_refresh)
 
+        self.action_swap = self._act(
+            "S_wap Left and Right Panes", None, None,
+            "Exchange the two sides of the comparison", self.on_swap_panes)
         self.action_zoom_in = self._act(
             "Zoom _In", QKeySequence.StandardKey.ZoomIn, "zoom-in",
             "Make the text larger", self.on_zoom_in)
@@ -267,6 +270,7 @@ class MeldWindow(QMainWindow):
         view_menu.addAction(self.action_toolbar_visible)
         view_menu.addAction(self.action_statusbar_visible)
         view_menu.addSeparator()
+        view_menu.addAction(self.action_swap)
         view_menu.addAction(self.action_refresh)
 
         help_menu = make_menu("help", "_Help")
@@ -735,6 +739,18 @@ class MeldWindow(QMainWindow):
         if view is not None:
             view.next_diff()
 
+    def on_swap_panes(self):
+        view = self._current_filediff()
+        if view is None:
+            return
+        if not view.swap_panes():
+            self._warn(_("Save both panes before swapping (or the comparison "
+                         "is 3-way)."))
+            return
+        index = self.tabs.currentIndex()
+        self.tabs.setTabText(index, self._diff_title(
+            [view.path(p) for p in range(view.num_panes)]))
+
     def on_refresh(self):
         view = self.tabs.currentWidget()
         if isinstance(view, (DirDiffView, VcView)):
@@ -783,7 +799,8 @@ class MeldWindow(QMainWindow):
                        self.action_next_change, self.action_undo,
                        self.action_redo, self.action_cut, self.action_copy,
                        self.action_paste, self.action_find,
-                       self.action_go_to_line, self.action_zoom_in,
+                       self.action_go_to_line, self.action_swap,
+                       self.action_zoom_in,
                        self.action_zoom_out, self.action_zoom_normal):
             action.setEnabled(is_filediff)
         self.action_refresh.setEnabled(is_tree)

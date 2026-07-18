@@ -761,5 +761,6 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
 - Async VcView status ✅ (QProcess, 150ms inline window; "Scanning repository…"
   banner; FailedToStart surfaces an error instead of a stuck banner).
 - Still open: external-editor command, overview-map style, VC commit-wrap/merge
-  order, visible size/mtime columns, swap panes, legacy-test split, packaging
-  build, i18n.
+  order, visible size/mtime columns, legacy-test split, packaging build, i18n.
+- Swap panes ✅ (View ▸ Swap Left and Right; refused with unsaved edits — the
+  Scintilla modified flag is save-point-based and can't be re-armed).

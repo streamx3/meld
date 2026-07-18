@@ -674,3 +674,24 @@ def test_shallow_pref_applies(window, tmp_path):
     from meldq.dircompare import STATE_NORMAL
     from tests.test_dirdiff_view import top_rows
     assert view.row_state(top_rows(view)["f.txt"], 0) == STATE_NORMAL
+
+
+def test_swap_panes(window, two_files):
+    a, b = two_files
+    view = window.append_filediff([a, b])
+    left_before = view.panes[0].text()
+    assert view.swap_panes()
+    assert view.panes[1].text() == left_before        # texts exchanged
+    assert view.path(0) == b and view.path(1) == a    # paths exchanged
+    assert window.tabs.tabText(0) == "a.txt : b.txt"  # (title refresh via action)
+    window.on_swap_panes()                            # swap back via the action
+    assert view.path(0) == a
+    assert window.tabs.tabText(0) == "a.txt : b.txt"
+
+
+def test_swap_refused_when_modified(window, two_files):
+    view = window.append_filediff(list(two_files))
+    view.panes[0].set_text("edited\n")
+    assert view.is_modified(0)
+    assert not view.swap_panes()                      # refused, nothing lost
+    assert view.panes[0].text() == "edited\n"

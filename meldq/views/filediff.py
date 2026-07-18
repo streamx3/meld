@@ -374,6 +374,32 @@ class FileDiffView(QWidget):
         if self.findbar._editor is None:
             self.findbar.attach(self.panes[self.focused_pane()])
 
+    def swap_panes(self):
+        """[2-way] swap the left and right panes (texts, paths, encodings,
+        read-only flags, disk tokens). Returns False when refused: 3-way views,
+        or unsaved edits — QScintilla's modified flag is save-point-based and
+        cannot be re-armed after set_text, so swapping dirty buffers would
+        silently lose their "unsaved" status."""
+        if self.num_panes != 2 or self.any_modified():
+            return False
+        texts = [self.panes[0].text(), self.panes[1].text()]
+        ro = [self.panes[0].isReadOnly(), self.panes[1].isReadOnly()]
+        for state in (self._paths, self._encoding, self._eol, self._disk_token):
+            state.reverse()
+        self._loading = True
+        try:
+            for i, pane in enumerate(self.panes):
+                pane.setReadOnly(False)
+                pane.set_language_for(self._paths[i])
+                pane.set_text(texts[1 - i])
+                pane.setModified(False)
+                pane.setReadOnly(ro[1 - i])
+        finally:
+            self._loading = False
+        self._watch_files()
+        self._recompute()
+        return True
+
     def go_to_line(self, line, pane=None):
         """Move the cursor of `pane` (default: focused) to 1-based `line`,
         clamped to the document, and scroll it into view."""
