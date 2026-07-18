@@ -277,3 +277,37 @@ def test_commit_during_merge_commits(vc, tmp_path):
     vc.commit_files(["f.txt"], "merge resolved")
     assert not (r / ".git" / "MERGE_HEAD").exists()   # merge committed
     assert last_commit_msg(r) == "merge resolved"
+
+
+# ----- V6/V9/V11: scope, git-availability, copied-entry parse ---------------
+
+def test_status_scoped_to_subdir(vc, repo):
+    # V6: opening a subdirectory lists only that subtree.
+    (repo / "top.txt").write_text("changed\n")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "inner.txt").write_text("new\n")
+    vc.set_location(str(repo / "sub"))
+    assert set(rows(vc)) == {"sub/inner.txt"}          # top.txt excluded
+
+
+def test_missing_git_message(vc, tmp_path, monkeypatch):
+    # V9: with git unavailable, say so rather than "Not a git repository".
+    monkeypatch.setattr(gitvc, "is_git_available", lambda: False)
+    monkeypatch.setattr(gitvc, "find_repo_root", lambda p: None)
+    vc.set_location(str(tmp_path))
+    assert "git is not installed" in (vc.infobar.message or "")
+
+
+def test_status_parses_copied_entry():
+    # V11: a "C" copy entry carries an origin token that must be consumed.
+    class P:
+        returncode = 0
+        stdout = "C  dest.txt\x00src.txt\x00 M other.txt\x00"
+    import meldq.gitvc as g
+    saved = g._run
+    g._run = lambda *a, **k: P()
+    try:
+        st = g.status("/x")
+    finally:
+        g._run = saved
+    assert st == {"dest.txt": g.STATE_MODIFIED, "other.txt": g.STATE_MODIFIED}

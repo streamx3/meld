@@ -111,9 +111,16 @@ class VcView(QWidget):
     def set_location(self, path):
         self.location = os.path.abspath(path)
         self.repo_root = gitvc.find_repo_root(self.location)
+        self._pathspec = None
         if self.repo_root is None:
-            self.infobar.show_message("Not a git repository.")
+            if not gitvc.is_git_available():
+                self.infobar.show_message("git is not installed.")
+            else:
+                self.infobar.show_message("Not a git repository.")
         else:
+            # Scope the listing to the opened subdirectory (not the whole repo).
+            rel = os.path.relpath(self.location, self.repo_root)
+            self._pathspec = None if rel == "." else rel
             self.infobar.clear()
         self.refresh()
 
@@ -125,7 +132,7 @@ class VcView(QWidget):
         # raises OSError. A slot exception is fatal in PyQt6, so degrade to a
         # message bar rather than aborting the app.
         try:
-            rows = sorted(gitvc.status(self.repo_root).items())
+            rows = sorted(gitvc.status(self.repo_root, self._pathspec).items())
         except OSError as exc:
             self.infobar.show_message("Version control error: %s" % exc)
             return
@@ -263,7 +270,8 @@ class VcView(QWidget):
     def on_commit(self):
         if self.repo_root is None:
             return
-        files = self._selected_relpaths() or sorted(gitvc.status(self.repo_root))
+        files = self._selected_relpaths() or \
+            sorted(gitvc.status(self.repo_root, self._pathspec))
         if not files:
             return
         dialog = CommitDialog(files, self)

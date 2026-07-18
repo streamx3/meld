@@ -378,6 +378,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - **Phase 3 DONE** (S1, D1–D10, V10; D7 case-collision left as a documented minor)
 - 🟡 **Phase 4 (VC) — in progress:**
   - V1+V2+V3+V5 — rename commits whole; commit works mid-merge; VC errors surfaced; revert staged-add leaves no ghost ✅
+  - V6+V9+V11 — VC view scoped to the opened subdir; git-missing message; copied-entry parse ✅
 - ⬜ Phases 4 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

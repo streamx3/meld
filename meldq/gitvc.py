@@ -70,14 +70,17 @@ def _classify(xy):
     return STATE_MODIFIED        # M / T / R / C
 
 
-def status(repo_root):
+def status(repo_root, pathspec=None):
     """Map relpath -> state for every file git reports as changed or untracked.
 
     Uses ``git status --porcelain -z`` so paths with spaces/newlines are safe;
-    a rename entry ("R") carries a trailing old-path token which is skipped.
+    a rename ("R") or copy ("C") entry carries a trailing origin-path token
+    which is skipped. `pathspec` scopes the report to a subdirectory.
     """
-    proc = _run(repo_root, ["status", "--porcelain", "-z",
-                            "--untracked-files=all"])
+    args = ["status", "--porcelain", "-z", "--untracked-files=all"]
+    if pathspec:
+        args += ["--", pathspec]
+    proc = _run(repo_root, args)
     if proc.returncode != 0:
         return {}
     tokens = proc.stdout.split("\0")
@@ -89,7 +92,7 @@ def status(repo_root):
         if not entry or len(entry) < 3:
             continue
         xy, path = entry[:2], entry[3:]
-        if "R" in xy:            # rename: consume the old-path token
+        if "R" in xy or "C" in xy:   # rename/copy: consume the origin-path token
             i += 1
         result[path] = _classify(xy)
     return result
