@@ -703,4 +703,8 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
 - ✅ CI fixed (2026-07-18): first runs failed — PyQt6 needs libglib/fontconfig on
   the runner, and git commit/merge need an identity (now set hermetically in
   conftest). Reproduced + verified green in a python:3.12-slim container
-  (751 passed). Stretch: go-to-line, L↔R patch pair, auto-width margin ✅.
+  (751 passed). **CI verified green on GitHub (run for 589dc0e4).**
+  Stretch done: go-to-line, L↔R patch pair, auto-width margin, keyboard merge
+  (Alt+Left/Alt+Right). Still open: per-pane chunkmaps, async VcView status,
+  word-wrap/swap-panes, regex content-filter UI, legacy-test split, packaging
+  build, i18n.

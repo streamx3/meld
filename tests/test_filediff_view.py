@@ -457,3 +457,15 @@ def test_opcodes_cache_invalidated_on_edit(fd):
     fd.panes[1].set_text("a\nb\n")           # now identical -> cache invalidated
     assert fd.opcodes() != first
     assert fd.opcodes() == []                # no differences
+
+
+def test_push_change_keyboard_2way(fd):
+    # Alt+Right from the left pane pushes the chunk under the cursor rightward.
+    fd.set_texts(["a\nLEFT\nb\n", "a\nRIGHT\nb\n"])
+    fd.panes[0].setCursorPosition(1, 0)
+    fd.push_change(+1, pane=0)
+    assert fd.panes[1].text() == "a\nLEFT\nb\n"
+    # Pushing off the edge is a no-op.
+    before = fd.panes[0].text()
+    fd.push_change(-1, pane=0)
+    assert fd.panes[0].text() == before

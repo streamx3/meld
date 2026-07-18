@@ -195,10 +195,15 @@ class FileDiffView(QWidget):
             view.action_shift_clicked.connect(
                 lambda line, p=pane: self._on_action_reverse(p, line))
 
-        # Find shortcuts live on the view so they work with any pane focused.
+        # Find + keyboard-merge shortcuts live on the view so they work with
+        # any pane focused.
         from PyQt6.QtGui import QKeySequence, QShortcut
         QShortcut(QKeySequence(Qt.Key.Key_F3), self, self.find_next)
         QShortcut(QKeySequence("Shift+F3"), self, self.find_prev)
+        QShortcut(QKeySequence("Alt+Right"), self,
+                  lambda: self.push_change(+1))
+        QShortcut(QKeySequence("Alt+Left"), self,
+                  lambda: self.push_change(-1))
 
     # ----- loading ----------------------------------------------------------
 
@@ -777,6 +782,27 @@ class FileDiffView(QWidget):
             else:
                 self.copy_chunk(chunk, src_pane=pane, dst_pane=1 - pane)
         elif pane != 1:
+            chunk = self.outer_chunk_at_line(pane, line)
+            if chunk is not None:
+                self.copy_to_base(pane, chunk)
+
+    def push_change(self, direction, pane=None, line=None):
+        """Keyboard merge: push the change under the cursor of `pane` (default:
+        focused) one pane to the right (+1) or left (-1). 2-way pushes between
+        the panes; 3-way pushes an outer pane's change into the base. Pushes
+        with no target (off the edge, or out of the base) are no-ops."""
+        if pane is None:
+            pane = self.focused_pane()
+        if line is None:
+            line = self.panes[pane].getCursorPosition()[0]
+        if self.num_panes == 2:
+            dst = pane + direction
+            if dst not in (0, 1):
+                return
+            chunk = self.chunk_at_line(pane, line)
+            if chunk is not None:
+                self.copy_chunk(chunk, src_pane=pane, dst_pane=dst)
+        elif pane != 1 and pane + direction == 1:   # outer pane -> base
             chunk = self.outer_chunk_at_line(pane, line)
             if chunk is not None:
                 self.copy_to_base(pane, chunk)

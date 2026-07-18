@@ -154,3 +154,15 @@ def test_shift_click_restores_base_deletion(fd3):
     line = next(ln for ln in range(3) if fd3.panes[0].has_action_marker(ln))
     fd3.panes[0].action_shift_clicked.emit(line)
     assert fd3.panes[0].text() == "a\nb\nc\n"        # deletion undone from base
+
+
+def test_push_change_keyboard_3way(fd3):
+    # Alt+Right from the left outer pane pushes its change into the base.
+    fd3.set_texts(["a\nL\nc\n", "a\nx\nc\n", "a\nx\nc\n"])
+    fd3.panes[0].setCursorPosition(1, 0)
+    fd3.push_change(+1, pane=0)
+    assert fd3.panes[1].text() == "a\nL\nc\n"
+    # The base can't push (ambiguous target) — no-op.
+    before = fd3.panes[2].text()
+    fd3.push_change(+1, pane=1)
+    assert fd3.panes[2].text() == before
