@@ -1,122 +1,81 @@
+meldq — Meld, ported to PyQt6
+=============================
 
-About Meld
-==========
+**meldq** is a product-oriented port of [Meld](https://meldmerge.org/) — the
+visual diff and merge tool — from GTK to **PyQt6 / QScintilla**. It compares
+files, directories, and git working copies, and adds a headline feature neither
+GTK Meld nor its 1.4 predecessor has: **importing and applying an external
+`.patch`** as an interactive comparison.
 
-Meld is a visual diff and merge tool targeted at developers. Meld helps you
-compare files, directories, and version controlled projects. It provides
-two- and three-way comparison of both files and directories, and supports
-many version control systems including Git, Mercurial, Bazaar, CVS and Subversion.
-
-Meld helps you review code changes, understand patches, and makes enormous
-merge conflicts slightly less painful.
-
-Meld is licensed under the GPL v2 or later.
-
+This is a fork of GNOME Meld. The upstream GTK application lives in `meld/`
+(kept as the behavioral reference); the PyQt6 application this repository builds
+is the `meldq/` package. Licensed under the GPL v2 or later.
 
 Requirements
 ------------
 
-* Python 3.10
-* pycairo (Python3 bindings for cairo without GObject layer)
-* PyGObject 3.38 (Python3 bindings for GObject introspection)
-* gsettings-desktop-schemas
+* Python 3.11+ (developed on 3.14)
+* PyQt6 ≥ 6.8  (the shell drives light/dark theming via `QStyleHints`, added in
+  Qt 6.8)
+* PyQt6-QScintilla ≥ 2.14  (the editor component)
 
-And following packages with GObject introspection:
-
-* GLib 2.66
-* Pango
-* PangoCairo
-* GTK+ 3.24
-* GtkSourceView 4.0
-
-
-Build requirements
-------------------
-
-* Python 3.10
-* Meson 1.11
-* Ninja
-* gettext
-* GLib 2.66 and its development utilities such as `glib-compile-schemas`
-
-For Windows build requirements, see `mingw64-dist` section of `.gitlab-ci.yml`
-
-
-Running
--------
-
-You *do not* need to build Meld in order to run it. Meld can be run directly
-from this source directory by running:
+Install and run (from source)
+-----------------------------
 
 ```sh
-$ bin/meld
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/meldq                 # or: .venv/bin/python -m meldq
 ```
 
-Unix users should get Meld from their distribution package manager, or from
-[Flathub](https://flathub.org/).
-
-Windows users should download the provided MSIs on the
-[Meld home page](https://meld.app/).
-
-OSX users can install Meld using Homebrew (or Macports, Fink, etc.), or there
-are unofficial native builds available from the
-[Meld for OSX](https://yousseb.github.io/meld/) project.
-
-
-Building
---------
-
-Meld uses [meson](https://mesonbuild.com/) build system. Use the following
-commands to build Meld from the source directory:
+Usage:
 
 ```sh
-$ meson setup _build
-$ cd _build
-$ ninja
+meldq                           # empty window
+meldq <file1> <file2> [<file3>] # 2- or 3-way file comparison
+meldq <dir1> <dir2> [<dir3>]    # 2- or 3-way directory comparison
+meldq <path>                    # version-control view of a git working copy
 ```
 
-You can then install Meld system-wide by running:
+`File ▸ Import Patch…` applies a `.patch`/`.diff` against a chosen base
+directory and opens each patched file as a comparison you can accept or reject
+hunk by hunk. `File ▸ Create Patch…` exports a unified diff of the current
+comparison.
 
-```sh
-$ ninja install
-```
-
-For building a Windows version, the `.gitlab-ci.yml` script is the most
-reliable reference.
-
-
-Developing
+What works
 ----------
 
-It's easy to get started developing Meld. From a git checkout, just run
-`bin/meld`.
+* **FileDiff** — 2- and 3-way compare and merge, syntax highlighting, inline
+  intra-line highlights, gutter click-merge, sync scroll, encoding- and
+  EOL-preserving load/save (incl. UTF-8 BOM), atomic save, on-disk-change reload
+  prompt, connector linkmaps.
+* **DirDiff** — 2/3-way folder compare with a six-valued state model, compare /
+  copy (symlink-preserving) / trash-delete with confirmation, VC-metadata dirs
+  hidden by default.
+* **VcView (git)** — status, working-vs-repository compare, commit, add / revert
+  / remove (with confirmation for destructive actions), scoped to the opened
+  directory.
+* **Patch** — pure-Python unified-diff parse + apply (no GNU `patch`
+  dependency), import and export.
+* **Shell** — tabbed window, New-Comparison dialog, CLI dispatch, System /
+  Light / Dark theming that follows the OS.
 
-You'll need to have installed everything listed in the Requirements section
-above, and also GLib development tools (for `glib-compile-resources`).
+Testing
+-------
 
-We also support development using Flatpak via GNOME Builder. At the Builder
-"Clone..." dialog, enter https://gitlab.gnome.org/GNOME/meld.git, and the
-default build + run development flow using Flatpak should work.
+```sh
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/ -q
+```
 
+`QT_QPA_PLATFORM=offscreen` is required for headless runs. See `MANUAL_TESTS.md`
+for the checks that need a real desktop.
 
-Contributing
-------------
+Status and known limitations
+-----------------------------
 
-Meld uses GNOME's GitLab to track bugs, and user questions and development
-discussions happen on the Meld mailing list. The development team is small,
-and new contributors are always welcome!
-
-List of issues: https://gitlab.gnome.org/GNOME/meld/issues
-
-Support forum:  https://discourse.gnome.org/tag/meld
-
-
-
-Links
------
-
-Home page:      https://meld.app/
-
-Documentation:  https://meld.app/help/
-
-Wiki:           https://gitlab.gnome.org/GNOME/meld/-/wikis/home
+See `BUILD_PLAN_3.24.md` for the plan and progress, and
+`REVIEW_FINDINGS_3.24.md` for the current review findings and their fixes.
+Notably deferred: a name/text **filter UI** (a default `.git`/VC-dir filter is
+applied), 3-way merge into a read-only patch-review pane, DirDiff size/mtime
+columns, the chunkmap overview, and packaging (macOS `.app` / Windows `.exe`
+scaffolding exists under `packaging/` but is not built in CI).

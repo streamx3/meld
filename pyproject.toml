@@ -15,7 +15,8 @@ requires-python = ">=3.11"
 dependencies = ["PyQt6>=6.8", "PyQt6-QScintilla>=2.14"]
 
 [project.optional-dependencies]
-highlight = ["pygments"]
+# Syntax highlighting is provided by QScintilla's built-in lexers; there is no
+# pygments dependency (the old "highlight" extra was dead and was removed).
 dev = ["pytest", "pytest-qt", "pytest-timeout"]
 package = ["pyinstaller>=6.0"]
 

@@ -394,7 +394,7 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - X7 — 4-file comparison warns instead of silently dropping the 4th path ✅
   - X8 — New-Comparison validates before closing (no discarded input) ✅
   - **Phase 6 DONE** (X5 history-clobber left as a documented minor in legacy historycombo)
-- ⬜ Phase 6 (rest: X2 icons, X5 history, X7/X8 CLI/dialog, X4 font) + Phase 7 (docs) — pending.
+- ✅ **Phase 7 (docs) DONE:** README rewritten for the fork (DOC1); MANUAL_TESTS updated to the fresh VcView (DOC2); BUILD_PLAN reconciled (DOC3–DOC6: prefs, chunkmap, sync scroll, filters/cols, -a, theming, test count); dead pygments extra removed.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will

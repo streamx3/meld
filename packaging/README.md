@@ -12,7 +12,7 @@ does **not** cross-compile — build the macOS `.app` on macOS and the Windows
 
 ```
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[highlight,package]"
+pip install -e ".[package]"
 ```
 
 `PyQt6-QScintilla` is a hard runtime dependency (declared in `pyproject.toml`)

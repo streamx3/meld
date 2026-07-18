@@ -101,10 +101,27 @@ Not feature-for-feature 3.24 parity. Not GTK look-alike. No DE/OS coupling (no K
 
 ## Progress log
 
-**Branch `release-3_24_0_qt`, ~574 tests green, all pushed to fork
-`git@github.com:streamx3/meld.git`.** Fresh code lives in `meldq/views/` +
-`meldq/widgets/` + a few top-level `meldq/*.py` cores; the 1.4 `meldq/*.py`
-(filediff/dirdiff/vcview/vc/) and the 3.24 `meld/` tree are REFERENCE only.
+**Branch `release-3_24_0_qt`, 712 tests green.** Fresh code lives in
+`meldq/views/` + `meldq/widgets/` + a few top-level `meldq/*.py` cores; the 1.4
+`meldq/*.py` (filediff/dirdiff/vcview/vc/) and the 3.24 `meld/` tree are
+REFERENCE only.
+
+> **Review reconciliation (2026-07-18).** A full review (`REVIEW_FINDINGS_3.24.md`)
+> found and fixed ~55 issues across Phases 0–6. Corrections to earlier claims in
+> this plan:
+> - **Prefs are NOT GSettings-aligned** — the keys are the 1.4 meldrc set
+>   (`color_*`, `use_custom_font`, `text_codecs`, …), not the `org.gnome.Meld`
+>   gschema names. Treat "GSettings-aligned keys" as aspirational/deferred.
+> - **No chunkmap / overview map** exists; M2's "linkmap/chunkmap" delivered the
+>   linkmap only. Overview map is deferred.
+> - **Sync scroll is naive same-line alignment**, not the influence-map
+>   algorithm; panes drift on unequal-length files. Deferred.
+> - **DirDiff size/time columns and the name/text filter UI are not built**
+>   (a default `.git`/VC-dir name filter *is* applied). Deferred.
+> - **`-a/--auto-compare` is a no-op** and does NOT reproduce 3.24's
+>   "auto-open a diff per changed file"; it is accepted for CLI compatibility only.
+> - Theming DOES reach the DirDiff/VcView trees (the older "Remaining" note
+>   saying otherwise was already stale).
 
 ### Done
 - **M0/M0.5/M1** — QScintilla editor spike; `meldq/patch.py` (pure-Python
