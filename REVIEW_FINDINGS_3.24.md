@@ -698,3 +698,5 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   (first slice inline; "Scanning… (N items)" banner; re-scan cancels in-flight).
 - ✅ P4 (2026-07-18): find/replace bar (SciFindBar) — Ctrl+F, F3/Shift+F3, match
   case, replace/replace-all (single undo, growing-needle safe, read-only no-op).
+- ✅ P5 (2026-07-18): Preferences dialog (Cmd+,) — font, tab width, theme, default
+  DirDiff filter globs; live re-apply to open tabs. **Round-2 priorities done.**

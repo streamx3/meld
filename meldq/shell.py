@@ -173,6 +173,9 @@ class MeldWindow(QMainWindow):
             "Paste the clipboard", lambda: self._editor_action("paste"))
         self.action_find = self._act(
             "_Find...", "Ctrl+F", "edit-find", "Search for text", self.on_find)
+        self.action_preferences = self._act(
+            "Prefere_nces...", QKeySequence.StandardKey.Preferences, None,
+            "Configure the editor, theme and filters", self.on_preferences)
 
         self.action_prev_change = self._act(
             "_Previous Change", "Ctrl+E", "go-up",
@@ -231,6 +234,8 @@ class MeldWindow(QMainWindow):
         edit_menu.addAction(self.action_paste)
         edit_menu.addSeparator()
         edit_menu.addAction(self.action_find)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.action_preferences)
 
         changes_menu = make_menu("changes", "_Changes")
         changes_menu.addAction(self.action_prev_change)
@@ -333,11 +338,12 @@ class MeldWindow(QMainWindow):
             self._apply_theme()
 
     def _apply_font_to(self, view):
-        """Apply the current editor font pref (custom, or the system fixed font)
-        to every pane of `view`."""
+        """Apply the current editor prefs (font + tab width) to every pane of
+        `view`."""
         font = self.prefs.get_current_font()
         for pane in view.panes:
             pane.set_base_font(font)
+            pane.setTabWidth(int(self.prefs.tab_size))
 
     def _reapply_font(self):
         for i in range(self.tabs.count()):
@@ -403,6 +409,9 @@ class MeldWindow(QMainWindow):
         view = DirDiffView(len(dirs))
         view.create_diff.connect(self._on_child_create_diff)
         view.set_theme(self._resolve_mode())
+        default_globs = self.prefs.dirdiff_name_filters
+        if default_globs:
+            view.apply_name_filter_text(default_globs)   # before the first scan
         view.set_roots(dirs)
         self._add_tab(view, self._diff_title(dirs, labels), "folder")
         return view
@@ -626,6 +635,11 @@ class MeldWindow(QMainWindow):
         if view is not None:
             view.show_find_bar()
 
+    def on_preferences(self):
+        dialog = PreferencesDialog(self)
+        dialog.show()
+        return dialog
+
     def on_prev_change(self):
         view = self._current_filediff()
         if view is not None:
@@ -726,8 +740,13 @@ class MeldWindow(QMainWindow):
     def _on_pref_changed(self, key):
         if key == "theme":
             self._apply_theme()
-        elif key in ("custom_font", "use_custom_font"):
+        elif key in ("custom_font", "use_custom_font", "tab_size"):
             self._reapply_font()
+        elif key == "dirdiff_name_filters":
+            for i in range(self.tabs.count()):
+                widget = self.tabs.widget(i)
+                if isinstance(widget, DirDiffView):
+                    widget.apply_name_filter_text(self.prefs.dirdiff_name_filters)
         elif key == "toolbar_visible":
             self.toolbar.setVisible(bool(self.prefs.toolbar_visible))
             self.action_toolbar_visible.setChecked(bool(self.prefs.toolbar_visible))
@@ -854,6 +873,94 @@ class PatchDialog(QDialog):
             except OSError as exc:
                 QMessageBox.warning(
                     self, "Meld", _("Could not save patch: %s") % exc)
+
+
+class PreferencesDialog(QDialog):
+    """Editor font / tab width, theme, and default DirDiff filters. Values are
+    written to prefs on OK; the shell reacts through the prefs.changed signal
+    (built in code, project convention)."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        from PyQt6.QtGui import QFont
+        from PyQt6.QtWidgets import (
+            QFontComboBox,
+            QLineEdit,
+            QSpinBox,
+            QTabWidget as _QTabWidget,
+        )
+
+        self.prefs = window.prefs
+        self.setWindowTitle(_("Preferences"))
+        self.setMinimumWidth(420)
+        tabs = _QTabWidget()
+
+        # --- Editor -------------------------------------------------------
+        editor_tab = QWidget()
+        form = QFormLayout(editor_tab)
+        self.use_custom = QCheckBox(_("Use a custom font"))
+        self.use_custom.setChecked(bool(self.prefs.use_custom_font))
+        current = QFont()
+        current.fromString(self.prefs.custom_font)
+        self.font_combo = QFontComboBox()
+        self.font_combo.setCurrentFont(current)
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(6, 72)
+        self.size_spin.setValue(max(6, current.pointSize()))
+        self.font_combo.setEnabled(self.use_custom.isChecked())
+        self.size_spin.setEnabled(self.use_custom.isChecked())
+        self.use_custom.toggled.connect(self.font_combo.setEnabled)
+        self.use_custom.toggled.connect(self.size_spin.setEnabled)
+        self.tab_spin = QSpinBox()
+        self.tab_spin.setRange(1, 16)
+        self.tab_spin.setValue(int(self.prefs.tab_size))
+        form.addRow(self.use_custom)
+        form.addRow(_("Font"), self.font_combo)
+        form.addRow(_("Size"), self.size_spin)
+        form.addRow(_("Tab width"), self.tab_spin)
+        tabs.addTab(editor_tab, _("Editor"))
+
+        # --- Display ------------------------------------------------------
+        display_tab = QWidget()
+        display_form = QFormLayout(display_tab)
+        self.theme_combo = QComboBox()
+        for value, label in MeldWindow._THEME_CHOICES:
+            self.theme_combo.addItem(_(label), value)
+        self.theme_combo.setCurrentIndex(
+            max(0, self.theme_combo.findData(self.prefs.theme)))
+        display_form.addRow(_("Theme"), self.theme_combo)
+        tabs.addTab(display_tab, _("Display"))
+
+        # --- Folder comparison -------------------------------------------
+        folder_tab = QWidget()
+        folder_form = QFormLayout(folder_tab)
+        self.filter_edit = QLineEdit(self.prefs.dirdiff_name_filters)
+        self.filter_edit.setPlaceholderText(
+            _("Globs to hide, space-separated (e.g. *.pyc build)"))
+        folder_form.addRow(_("Hide names"), self.filter_edit)
+        tabs.addTab(folder_tab, _("Folder Comparison"))
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(tabs)
+        layout.addWidget(buttons)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+    def accept(self):
+        p = self.prefs
+        p.use_custom_font = self.use_custom.isChecked()
+        font = self.font_combo.currentFont()
+        font.setPointSize(self.size_spin.value())
+        p.custom_font = font.toString()
+        p.tab_size = self.tab_spin.value()
+        p.theme = self.theme_combo.currentData()
+        p.dirdiff_name_filters = self.filter_edit.text()
+        super().accept()
 
 
 class NewComparisonDialog(QDialog):

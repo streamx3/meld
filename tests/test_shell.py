@@ -518,3 +518,55 @@ def test_vc_conflict_opens_three_way_resolve(window, tmp_path):
     # Add marks it resolved -> no longer conflicted.
     assert gitvc.add(str(r), "f.txt")
     assert gitvc.status(str(r)).get("f.txt") != gitvc.STATE_CONFLICT
+
+
+# ----- preferences dialog ----------------------------------------------------
+
+def test_preferences_dialog_writes_prefs(window):
+    from meldq.shell import PreferencesDialog
+    dlg = PreferencesDialog(window)
+    dlg.use_custom.setChecked(True)
+    dlg.size_spin.setValue(15)
+    dlg.tab_spin.setValue(8)
+    dlg.theme_combo.setCurrentIndex(dlg.theme_combo.findData("dark"))
+    dlg.filter_edit.setText("*.pyc build")
+    dlg.accept()
+    assert window.prefs.use_custom_font is True
+    assert ",15," in window.prefs.custom_font or ",15" in window.prefs.custom_font
+    assert window.prefs.tab_size == 8
+    assert window.prefs.theme == "dark"
+    assert window.prefs.dirdiff_name_filters == "*.pyc build"
+
+
+def test_tab_size_pref_applies_to_panes(window, two_files):
+    view = window.append_filediff(list(two_files))
+    assert view.panes[0].tabWidth() == 4            # default
+    window.prefs.tab_size = 8
+    assert view.panes[0].tabWidth() == 8            # live re-apply
+
+
+def test_dirdiff_filter_pref_seeds_new_tabs(window, tmp_path):
+    window.prefs.dirdiff_name_filters = "*.bak"
+    left, right = tmp_path / "l", tmp_path / "r"
+    for d in (left, right):
+        d.mkdir()
+        (d / "keep.txt").write_text("x")
+        (d / "junk.bak").write_text("x")
+    view = window.append_dirdiff([str(left), str(right)])
+    from tests.test_dirdiff_view import top_rows
+    rows = top_rows(view)
+    assert "keep.txt" in rows and "junk.bak" not in rows
+    assert view.filter_edit.text() == "*.bak"       # visible in the filter bar
+
+
+def test_dirdiff_filter_pref_updates_open_tabs(window, tmp_path):
+    left, right = tmp_path / "l", tmp_path / "r"
+    for d in (left, right):
+        d.mkdir()
+        (d / "keep.txt").write_text("x")
+        (d / "junk.tmp").write_text("x")
+    view = window.append_dirdiff([str(left), str(right)])
+    from tests.test_dirdiff_view import top_rows
+    assert "junk.tmp" in top_rows(view)
+    window.prefs.dirdiff_name_filters = "*.tmp"     # change pref while open
+    assert "junk.tmp" not in top_rows(view)

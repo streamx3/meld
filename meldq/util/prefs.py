@@ -139,6 +139,9 @@ DEFAULTS = {
     # Theming: "system" follows the OS appearance (and live changes), "light"
     # or "dark" force a mode. No user colour pickers (per BUILD_PLAN_3.24).
     "theme": Value(STRING, "system"),
+    # Default DirDiff name-filter globs (space-separated, e.g. "*.pyc build"),
+    # pre-loaded into every new folder comparison's filter bar.
+    "dirdiff_name_filters": Value(STRING, ""),
 }
 
 
