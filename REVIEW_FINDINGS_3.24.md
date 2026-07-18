@@ -696,3 +696,5 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
   running the offscreen suite on push/PR, py3.11+3.12. Verify on first push.
 - ✅ P3 (2026-07-18): async DirDiff scan — walk() consumed in event-loop slices
   (first slice inline; "Scanning… (N items)" banner; re-scan cancels in-flight).
+- ✅ P4 (2026-07-18): find/replace bar (SciFindBar) — Ctrl+F, F3/Shift+F3, match
+  case, replace/replace-all (single undo, growing-needle safe, read-only no-op).

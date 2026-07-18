@@ -30,7 +30,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -624,14 +623,8 @@ class MeldWindow(QMainWindow):
 
     def on_find(self):
         view = self._current_filediff()
-        if view is None:
-            return
-        editor = self.focusWidget()
-        if not hasattr(editor, "findFirst"):
-            editor = view.panes[view.focused_pane()]
-        text, ok = QInputDialog.getText(self, _("Find"), _("Search for:"))
-        if ok and text:
-            editor.findFirst(text, False, False, False, True)
+        if view is not None:
+            view.show_find_bar()
 
     def on_prev_change(self):
         view = self._current_filediff()

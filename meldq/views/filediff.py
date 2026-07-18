@@ -25,6 +25,7 @@ from meldq.engine.matchers import MyersSequenceMatcher
 from meldq.views.chunkmap import ChunkMap
 from meldq.views.linkmap import LinkMap
 from meldq.widgets.infobar import InfoBar
+from meldq.widgets.scifindbar import SciFindBar
 from meldq.widgets.sciview import (
     KIND_CONFLICT,
     KIND_DELETE,
@@ -159,10 +160,13 @@ class FileDiffView(QWidget):
                 LinkMap(self.panes[side], self.panes[side + 1],
                         chunks_fn, self.theme))
 
+        self.findbar = SciFindBar()
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         outer.addWidget(self.infobar)
+        outer.addWidget(self.findbar)
         panes_row = QHBoxLayout()
         panes_row.setContentsMargins(0, 0, 0, 0)
         panes_row.setSpacing(0)
@@ -190,6 +194,11 @@ class FileDiffView(QWidget):
                 lambda line, p=pane: self._on_action(p, line))
             view.action_shift_clicked.connect(
                 lambda line, p=pane: self._on_action_reverse(p, line))
+
+        # Find shortcuts live on the view so they work with any pane focused.
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        QShortcut(QKeySequence(Qt.Key.Key_F3), self, self.find_next)
+        QShortcut(QKeySequence("Shift+F3"), self, self.find_prev)
 
     # ----- loading ----------------------------------------------------------
 
@@ -334,6 +343,24 @@ class FileDiffView(QWidget):
     def focused_pane(self):
         """The pane index that currently has keyboard focus (0 if none)."""
         return self._focused_pane()
+
+    # ----- find / replace ---------------------------------------------------
+
+    def show_find_bar(self):
+        """Open the find/replace bar targeting the focused pane (Ctrl+F)."""
+        self.findbar.show_bar(self.panes[self.focused_pane()])
+
+    def find_next(self):
+        self._ensure_find_target()
+        return self.findbar.find_next()
+
+    def find_prev(self):
+        self._ensure_find_target()
+        return self.findbar.find_prev()
+
+    def _ensure_find_target(self):
+        if self.findbar._editor is None:
+            self.findbar.attach(self.panes[self.focused_pane()])
 
     def save(self, pane, path=None, force=False):
         """Write `pane` back with its original encoding + EOL. The buffer is
