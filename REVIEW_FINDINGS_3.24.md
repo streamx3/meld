@@ -347,8 +347,12 @@ items are independent unless noted.
 - **X5** — New-Comparison history clobber (in the legacy `historycombo`).
 - **PF2 tail** — cooperative-generator rewrite for a single pathological diff
   (the per-keystroke case is fixed by debounce); was already on the deferred list.
-- Per-plan deferrals: filter UI, chunkmap overview, influence-map sync scroll,
-  DirDiff size/mtime columns, 3-way base→side merge.
+- Per-plan deferrals: filter UI, chunkmap overview, DirDiff size/mtime
+  columns, 3-way base→side merge.
+
+**Post-completion follow-ups (deferred items now also done):**
+- DOC5 — sync scroll is now chunk-aware (influence-map): corresponding content
+  stays aligned across panes of unequal length instead of drifting.
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.

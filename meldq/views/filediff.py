@@ -675,6 +675,48 @@ class FileDiffView(QWidget):
 
     # ----- sync scroll ------------------------------------------------------
 
+    @staticmethod
+    def _map_line(chunks, line):
+        """Map `line` in the source of `chunks` [(s1,s2,d1,d2)…] to the
+        corresponding destination line. Equal regions between chunks map 1:1
+        (offset by accumulated insertions/deletions); inside a replace region
+        the position is interpolated proportionally. This is the influence-map
+        idea: corresponding content stays aligned across panes of unequal length
+        instead of drifting by the same absolute line number."""
+        offset = 0
+        for s1, s2, d1, d2 in chunks:
+            if line < s1:
+                break                       # in the equal region before s1
+            if line < s2:                   # inside the changed region
+                span = s2 - s1
+                frac = (line - s1) / span if span else 0
+                return int(round(d1 + frac * (d2 - d1)))
+            offset = d2 - s2                # carry the offset past this chunk
+        return line + offset
+
+    def _sync_chunks(self, src_pane, dst_pane):
+        """[(s1,s2,d1,d2)…] mapping lines in src_pane to dst_pane, sorted by s1.
+        2-way uses the raw opcodes; 3-way routes each outer pane through the
+        base via pair_chunks."""
+        if self.num_panes == 2:
+            out = []
+            for tag, l1, l2, r1, r2 in self.opcodes():
+                out.append((l1, l2, r1, r2) if src_pane == 0
+                           else (r1, r2, l1, l2))
+            return out
+        # 3-way: build against the base (pane 1). pair_chunks(0)=pane0<->base,
+        # pair_chunks(1)=base<->pane2, each as (tag, s_lo, s_hi, d_lo, d_hi).
+        if {src_pane, dst_pane} == {0, 1}:
+            raw = self.pair_chunks(0)
+            fwd = src_pane == 0
+        else:  # {1,2} — only base<->outer pairs are asked for (see _on_scrolled)
+            raw = self.pair_chunks(1)
+            fwd = src_pane == 1
+        out = []
+        for tag, a1, a2, b1, b2 in raw:
+            out.append((a1, a2, b1, b2) if fwd else (b1, b2, a1, a2))
+        return out
+
     def _on_scrolled(self):
         for lm in self.linkmaps:
             lm.update()                 # connectors follow the scroll
@@ -683,12 +725,24 @@ class FileDiffView(QWidget):
         src = self.sender()
         if src not in self.panes:
             return
+        src_pane = self.panes.index(src)
         line = src.first_visible_line()
         self._syncing = True
         try:
-            for view in self.panes:
-                if view is not src:
-                    view.scroll_to_line(line)
+            if self.num_panes == 2:
+                other = 1 - src_pane
+                chunks = sorted(self._sync_chunks(src_pane, other))
+                self.panes[other].scroll_to_line(self._map_line(chunks, line))
+            else:
+                # Route through the base: source -> base -> each other pane.
+                base_line = line if src_pane == 1 else self._map_line(
+                    sorted(self._sync_chunks(src_pane, 1)), line)
+                for t in range(3):
+                    if t == src_pane:
+                        continue
+                    target = base_line if t == 1 else self._map_line(
+                        sorted(self._sync_chunks(1, t)), base_line)
+                    self.panes[t].scroll_to_line(target)
         finally:
             self._syncing = False
 

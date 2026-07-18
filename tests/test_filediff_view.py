@@ -110,6 +110,36 @@ def test_sync_scroll_no_infinite_recursion(fd):
     assert fd._syncing is False
 
 
+def test_map_line_aligns_across_insertion():
+    # DOC5: influence-map mapping — a 20-line insertion at the top of the left
+    # pane means left line 30 corresponds to right line 10, not right line 30.
+    left = ["INS"] * 20 + ["common%d" % i for i in range(50)]
+    right = ["common%d" % i for i in range(50)]
+    # opcodes for this pair: an insert chunk (left 0..20 vs right 0..0).
+    chunks = [(0, 20, 0, 0)]                     # (s1,s2,d1,d2) left->right
+    assert FileDiffView._map_line(chunks, 30) == 10   # common10 aligns
+    assert FileDiffView._map_line(chunks, 0) == 0     # inside the insert -> top
+    assert FileDiffView._map_line(chunks, 25) == 5
+
+
+def test_sync_scroll_aligns_content(fd, qtbot):
+    left = "".join("INS\n" for _ in range(20)) + \
+        "".join("common%d\n" % i for i in range(50))
+    right = "".join("common%d\n" % i for i in range(50))
+    fd.set_texts([left, right])
+    fd.resize(700, 300)
+    fd.show()
+    qtbot.waitExposed(fd)
+    fd.panes[0].scroll_to_line(30)              # left shows common10 at top
+    fd.sender = lambda: fd.panes[0]             # stub the signal sender
+    try:
+        fd._on_scrolled()
+    finally:
+        del fd.sender
+    lv, rv = fd.panes[0].first_visible_line(), fd.panes[1].first_visible_line()
+    assert left.split("\n")[lv] == right.split("\n")[rv]   # same content aligned
+
+
 # ----- M2: editing + live re-diff + merge -----------------------------------
 
 def test_live_rediff_on_edit(fd):
