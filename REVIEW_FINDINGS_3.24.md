@@ -343,7 +343,7 @@ items are independent unless noted.
 **Explicitly deferred (documented, not fixed):**
 - **PF2 tail** — cooperative-generator rewrite for a single pathological diff
   (the per-keystroke case is fixed by debounce); was already on the deferred list.
-- Per-plan deferrals still open: chunkmap overview.
+- Per-plan deferrals: **all now implemented.**
 
 **Post-completion follow-ups (deferred items now also done):**
 - DOC5 — sync scroll is now chunk-aware (influence-map): corresponding content
@@ -358,6 +358,8 @@ items are independent unless noted.
   (2-way Shift+click pulls the other side into the clicked pane).
 - PF2 tail — big-file re-diff now runs cooperatively (yields across event-loop
   slices), so the O(NP) worst case no longer freezes the UI; opcodes cached.
+- Chunkmap / overview map — full-height strip of all chunks with a you-are-here
+  handle and click/drag scrub (meldq/views/chunkmap.py).
 
 Real-Mac eyeball still worth doing for: Trash fallback prompt, toolbar/tab icons,
 editor font, Ctrl+D navigation.

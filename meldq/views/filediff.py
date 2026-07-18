@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from meldq.engine.diffutil import Differ
 from meldq.engine.matchers import MyersSequenceMatcher
+from meldq.views.chunkmap import ChunkMap
 from meldq.views.linkmap import LinkMap
 from meldq.widgets.infobar import InfoBar
 from meldq.widgets.sciview import (
@@ -169,6 +170,12 @@ class FileDiffView(QWidget):
             panes_row.addWidget(self.panes[side], 1)
             panes_row.addWidget(self.linkmaps[side])
         panes_row.addWidget(self.panes[-1], 1)
+        # Overview map at the far right: a bird's-eye of all chunks on the last
+        # pane's side, with a you-are-here handle and click/drag scrub.
+        self.chunkmap = ChunkMap(
+            self.panes[-1], self._chunkmap_chunks, self.theme,
+            lambda: max(1, self.panes[-1].lines()))
+        panes_row.addWidget(self.chunkmap)
         outer.addLayout(panes_row)
 
         # Merge arrows: outer panes point inward. 2-way: left→ / right←. 3-way:
@@ -431,6 +438,7 @@ class FileDiffView(QWidget):
             view.apply_theme(theme)
         for lm in self.linkmaps:
             lm.update()
+        self.chunkmap.update()
 
     # ----- diff computation / rendering -------------------------------------
 
@@ -447,6 +455,16 @@ class FileDiffView(QWidget):
                 None, self._pane_lines(0), self._pane_lines(1)
             ).get_difference_opcodes()
         return self._opcodes_cache
+
+    def _chunkmap_chunks(self):
+        """[(tag, lo, hi)] for the LAST pane's side — what the overview map
+        paints. 2-way uses the right side of each opcode; 3-way uses pane 2's
+        changes vs the base."""
+        if self.num_panes == 2:
+            return [(tag, r1, r2)
+                    for tag, _l1, _l2, r1, r2 in self.opcodes()]
+        return [(c[0], c[1], c[2])
+                for c in self.differ.single_changes(self.num_panes - 1)]
 
     def pair_chunks(self, side):
         """3-way chunks between adjacent panes `side` and `side+1`, as
@@ -542,6 +560,7 @@ class FileDiffView(QWidget):
             self._render_3way()
         for lm in self.linkmaps:
             lm.update()
+        self.chunkmap.update()
 
     def _render_2way(self):
         left, right = self.panes
