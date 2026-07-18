@@ -28,7 +28,7 @@ import re
 import sys
 
 from PyQt6.QtCore import QObject, QSettings, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontDatabase
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontInfo
 
 from meldq.conf import _
 
@@ -289,6 +289,13 @@ class Preferences(QObject):
         if self.use_custom_font:
             f = QFont()
             f.fromString(self.custom_font)
+            # "monospace" is a real family on Linux/fontconfig but not on macOS
+            # (it resolves to the proportional system UI font). Force a
+            # fixed-pitch fallback so a migrated meldrc font stays monospaced.
+            if not QFontInfo(f).fixedPitch():
+                fixed = QFontDatabase.systemFont(
+                    QFontDatabase.SystemFont.FixedFont)
+                f.setFamily(fixed.family())
             return f
         return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
 

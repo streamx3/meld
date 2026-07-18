@@ -75,3 +75,21 @@ def test_no_syntaxwarning_on_import():
     result = subprocess.run(
         [sys.executable, "-W", "error", "-c", "import meldq.util.prefs"])
     assert result.returncode == 0
+
+
+def test_custom_font_falls_back_to_fixed_family(qapp, settings):
+    # X4: a migrated "monospace" family is proportional on macOS; get_current_font
+    # must fall back to the system fixed-pitch family.
+    from PyQt6.QtGui import QFont, QFontDatabase, QFontInfo
+    probe = QFont()
+    probe.fromString("monospace,13")
+    p = Preferences(settings)
+    p.use_custom_font = True
+    p.custom_font = "monospace,13"
+    f = p.get_current_font()
+    if not QFontInfo(probe).fixedPitch():
+        # "monospace" resolved proportional -> we forced the fixed family
+        assert f.family() == QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont).family()
+    else:
+        assert f.family()               # platform has a real monospace family

@@ -90,13 +90,39 @@ class MeldWindow(QMainWindow):
 
     # ----- construction -----------------------------------------------------
 
+    # Freedesktop theme name -> QStyle standard pixmap, a fallback for platforms
+    # with no icon theme (macOS, Windows) where QIcon.fromTheme returns null.
+    _STD_ICON = {
+        "document-new": "SP_FileIcon", "document-save": "SP_DialogSaveButton",
+        "document-save-as": "SP_DialogSaveButton",
+        "window-close": "SP_DialogCloseButton",
+        "application-exit": "SP_DialogCloseButton",
+        "edit-undo": "SP_ArrowBack", "edit-redo": "SP_ArrowForward",
+        "go-up": "SP_ArrowUp", "go-down": "SP_ArrowDown",
+        "view-refresh": "SP_BrowserReload", "help-contents": "SP_DialogHelpButton",
+        "help-about": "SP_DialogHelpButton", "folder": "SP_DirIcon",
+        "folder-remote": "SP_DirIcon", "text-x-generic": "SP_FileIcon",
+    }
+
+    def _themed_icon(self, name):
+        """A themed icon, falling back to a platform-style standard icon so the
+        toolbar/menus/tabs aren't blank where there is no icon theme."""
+        icon = QIcon.fromTheme(name)
+        if not icon.isNull():
+            return icon
+        std = self._STD_ICON.get(name)
+        if std is not None:
+            from PyQt6.QtWidgets import QStyle
+            return self.style().standardIcon(getattr(QStyle.StandardPixmap, std))
+        return QIcon()
+
     def _act(self, text, shortcut=None, icon=None, tip=None, slot=None,
              checkable=False):
         action = QAction(mnemonic(_(text)), self)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
         if icon:
-            action.setIcon(QIcon.fromTheme(icon))
+            action.setIcon(self._themed_icon(icon))
         if tip:
             action.setStatusTip(_(tip))
         if checkable:
@@ -323,7 +349,7 @@ class MeldWindow(QMainWindow):
     # ----- tab helpers ------------------------------------------------------
 
     def _add_tab(self, widget, title, icon_name=None):
-        icon = QIcon.fromTheme(icon_name) if icon_name else QIcon()
+        icon = self._themed_icon(icon_name) if icon_name else QIcon()
         index = self.tabs.addTab(widget, icon, title)
         self.tabs.setTabToolTip(index, title)
         self.tabs.setCurrentIndex(index)
