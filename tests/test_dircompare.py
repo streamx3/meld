@@ -207,3 +207,26 @@ def test_unreadable_dir_is_error_not_identical(tmp_path):
         assert "secret/inner.txt" not in entries           # not descended/misclassified
     finally:
         os.chmod(left / "secret", 0o755)
+
+
+# ---------------------------------------------------------------------------
+# D8/D9: filtered compare is byte-faithful; unfiltered compare streams
+# ---------------------------------------------------------------------------
+
+def test_filter_does_not_falsely_equate_binary(tmp_path):
+    # Two files differing only in a non-UTF-8 byte, with a filter that matches
+    # NEITHER, must stay different (utf-8/"replace" folded them to U+FFFD -> 2).
+    a, b = tmp_path / "a", tmp_path / "b"
+    write(a, b"\xe9\n")
+    write(b, b"\xe8\n")
+    assert files_same([str(a), str(b)], [re.compile(r"#.*")]) == 0
+
+
+def test_stream_compare_large_same_and_diff(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    blob = b"x" * (200 * 1024)                 # spans several read chunks
+    write(a, blob)
+    write(b, blob)
+    assert files_same([str(a), str(b)]) == 1
+    write(b, blob[:-1] + b"y")                 # last byte differs
+    assert files_same([str(a), str(b)]) == 0

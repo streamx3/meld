@@ -371,6 +371,8 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
   - D4 — walk() cycle guard: directory symlink loops terminate ✅
   - D3 — unreadable directory flagged ERROR + message, not reported identical ✅
   - D2+V10 — confirm before irreversible delete (trash-fail; VC revert-untracked / remove) ✅
+  - D8+D9 — filtered compare is byte-faithful (latin-1, not lossy utf-8); unfiltered compare streams ✅
+  - D6 — copy preserves symlinks instead of dereferencing them ✅
 - ⬜ Phases 3 (rest)–7 — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter

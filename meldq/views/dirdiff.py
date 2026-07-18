@@ -299,15 +299,23 @@ class DirDiffView(QWidget):
     def copy_to(self, index, src_pane, dst_pane):
         """Copy the row's file/dir from src_pane to dst_pane (same relpath)."""
         src, dst = self._path(index, src_pane), self._path(index, dst_pane)
-        if src is None or not os.path.exists(src):
+        if src is None or not os.path.lexists(src):   # lexists: also broken links
             return
         # An I/O failure (dir-over-file collision, permissions, full disk) must
         # not abort the app — a slot exception is fatal in PyQt6 — so surface it
-        # as a message bar instead.
+        # as a message bar instead. Symlinks are copied as links (not
+        # dereferenced), matching 3.24.
         try:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            if os.path.isdir(src):
-                shutil.copytree(src, dst, dirs_exist_ok=True)
+            if os.path.islink(src):
+                if os.path.lexists(dst):
+                    if os.path.isdir(dst) and not os.path.islink(dst):
+                        shutil.rmtree(dst)
+                    else:
+                        os.remove(dst)
+                os.symlink(os.readlink(src), dst)
+            elif os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
             else:
                 shutil.copy2(src, dst)
         except OSError as exc:

@@ -24,11 +24,25 @@ STATE_NORMAL, STATE_NOCHANGE, STATE_MODIFIED, STATE_NEW, STATE_MISSING, \
     STATE_ERROR = range(6)
 
 
+def _streams_equal(paths, chunk=65536):
+    """Byte-compare files of equal size without slurping them whole."""
+    handles = [open(p, "rb") for p in paths]
+    try:
+        while True:
+            blocks = [h.read(chunk) for h in handles]
+            if any(b != blocks[0] for b in blocks):
+                return False
+            if not blocks[0]:           # all at EOF together (sizes matched)
+                return True
+    finally:
+        for h in handles:
+            h.close()
+
+
 def files_same(paths, regexes=()):
     """Tri-state content comparison of existing paths: 1 identical, 2 identical
     only after applying `regexes`, 0 different. All-directories -> 1; a
-    file/dir mix -> 0. Raises nothing for a normal read; falls back to filecmp
-    if a file is too large to slurp."""
+    file/dir mix -> 0."""
     if len(paths) <= 1:
         return 1
     sigs = [os.stat(p) for p in paths]
@@ -37,8 +51,18 @@ def files_same(paths, regexes=()):
         return 1
     if not all(are_files):              # a file/dir mixture
         return 0
-    if not regexes and len({s.st_size for s in sigs}) > 1:
-        return 0                        # different sizes, no filters -> differ
+
+    if not regexes:
+        # No filters: different sizes differ; else stream-compare in chunks
+        # instead of loading every pane's whole file into memory at once.
+        if len({s.st_size for s in sigs}) > 1:
+            return 0
+        return 1 if _streams_equal(paths) else 0
+
+    # Filtered compare needs the full content to strip the regexes. Decode with
+    # latin-1 (a lossless 1:1 byte map) NOT utf-8/"replace" — the latter folds
+    # every distinct invalid byte to U+FFFD, so two byte-different binaries
+    # would compare equal and wrongly report NOCHANGE even when no regex matched.
     try:
         contents = [open(p, "rb").read() for p in paths]
     except (MemoryError, OverflowError):
@@ -48,12 +72,11 @@ def files_same(paths, regexes=()):
         return 1
     if all(c == contents[0] for c in contents):
         return 1
-    if regexes:
-        texts = [c.decode("utf-8", "replace") for c in contents]
-        for regex in regexes:
-            texts = [re.sub(regex, "", t) for t in texts]
-        if all(t == texts[0] for t in texts):
-            return 2
+    texts = [c.decode("latin-1") for c in contents]
+    for regex in regexes:
+        texts = [re.sub(regex, "", t) for t in texts]
+    if all(t == texts[0] for t in texts):
+        return 2
     return 0
 
 

@@ -256,3 +256,16 @@ def test_delete_trash_failure_declined(dd, tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "_confirm", lambda msg: False)
     dd.delete(top_rows(dd)["f.txt"], 0)
     assert (left / "f.txt").exists()                   # declined -> kept
+
+
+def test_copy_preserves_symlink(dd, tmp_path):
+    import os
+    left, right = tmp_path / "left", tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    (left / "target.txt").write_text("x\n")
+    os.symlink("target.txt", left / "link.txt")       # relative symlink
+    dd.set_roots([str(left), str(right)])
+    dd.copy_to(top_rows(dd)["link.txt"], 0, 1)
+    assert os.path.islink(right / "link.txt")         # copied as a link
+    assert os.readlink(right / "link.txt") == "target.txt"
