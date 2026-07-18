@@ -692,3 +692,5 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
 - ✅ P1 (2026-07-18): VC conflict resolution — UU rows open ours|working|theirs
   3-way (outer panes read-only), merge arrows resolve into the working file,
   Save writes it, Add marks resolved. End-to-end test with a real merge repo.
+- ✅ P2 (2026-07-18): CI — GitHub Actions workflow (.github/workflows/tests.yml)
+  running the offscreen suite on push/PR, py3.11+3.12. Verify on first push.
