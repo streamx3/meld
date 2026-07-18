@@ -152,6 +152,7 @@ DEFAULTS = {
     # apply_text_filters gates the (slow) regex-filtered content compare.
     "folder_shallow": Value(BOOL, False),
     "folder_apply_text_filters": Value(BOOL, False),
+    "show_whitespace": Value(BOOL, False),
 }
 
 

@@ -756,5 +756,8 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
     "apply text filters" is on. Live-applied to open folder tabs.
   - Also flipped the stale `show_line_numbers`/`use_syntax_highlighting` defaults
     from 0→True to match what the editor actually shows.
+- Round-3 stretch (2026-07-18): per-pane chunkmaps (both outer edges) ✅;
+  word-wrap + show-whitespace prefs wired (methods existed unused) ✅.
 - Still open: external-editor command, overview-map style, VC commit-wrap/merge
-  order, visible size/mtime columns, per-pane chunkmaps.
+  order, visible size/mtime columns, async VcView status, swap panes,
+  legacy-test split, packaging build, i18n.

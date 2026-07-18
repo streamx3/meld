@@ -170,16 +170,23 @@ class FileDiffView(QWidget):
         panes_row = QHBoxLayout()
         panes_row.setContentsMargins(0, 0, 0, 0)
         panes_row.setSpacing(0)
+        # Overview maps on the OUTER edges: a bird's-eye of each outer pane's
+        # chunks, with a you-are-here handle and click/drag scrub (the base
+        # pane of a 3-way has no map of its own — its changes appear on both
+        # outer maps). Layout: [map0][pane0][lm]…[paneN][mapN].
+        def make_map(pane):
+            return ChunkMap(
+                self.panes[pane], lambda p=pane: self._pane_chunks(p),
+                self.theme, lambda p=pane: max(1, self.panes[p].lines()))
+
+        self.chunkmaps = [make_map(0), make_map(num_panes - 1)]
+        panes_row.addWidget(self.chunkmaps[0])
         for side in range(num_panes - 1):
             panes_row.addWidget(self.panes[side], 1)
             panes_row.addWidget(self.linkmaps[side])
         panes_row.addWidget(self.panes[-1], 1)
-        # Overview map at the far right: a bird's-eye of all chunks on the last
-        # pane's side, with a you-are-here handle and click/drag scrub.
-        self.chunkmap = ChunkMap(
-            self.panes[-1], self._chunkmap_chunks, self.theme,
-            lambda: max(1, self.panes[-1].lines()))
-        panes_row.addWidget(self.chunkmap)
+        panes_row.addWidget(self.chunkmaps[-1])
+        self.chunkmap = self.chunkmaps[-1]      # back-compat name
         outer.addLayout(panes_row)
 
         # Merge arrows: outer panes point inward. 2-way: left→ / right←. 3-way:
@@ -500,15 +507,22 @@ class FileDiffView(QWidget):
             ).get_difference_opcodes()
         return self._opcodes_cache
 
-    def _chunkmap_chunks(self):
-        """[(tag, lo, hi)] for the LAST pane's side — what the overview map
-        paints. 2-way uses the right side of each opcode; 3-way uses pane 2's
-        changes vs the base."""
+    def _pane_chunks(self, pane):
+        """[(tag, lo, hi)] on `pane`'s side — what its overview map paints.
+        2-way slices each opcode's own side; 3-way uses that pane's changes vs
+        the base."""
         if self.num_panes == 2:
+            if pane == 0:
+                return [(tag, l1, l2)
+                        for tag, l1, l2, _r1, _r2 in self.opcodes()]
             return [(tag, r1, r2)
                     for tag, _l1, _l2, r1, r2 in self.opcodes()]
         return [(c[0], c[1], c[2])
-                for c in self.differ.single_changes(self.num_panes - 1)]
+                for c in self.differ.single_changes(pane)]
+
+    def _chunkmap_chunks(self):
+        """Back-compat alias: the LAST pane's overview chunks."""
+        return self._pane_chunks(self.num_panes - 1)
 
     def pair_chunks(self, side):
         """3-way chunks between adjacent panes `side` and `side+1`, as

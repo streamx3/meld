@@ -371,6 +371,8 @@ class MeldWindow(QMainWindow):
             pane.set_highlight_current_line(p.highlight_current_line)
             pane.set_right_margin(p.right_margin_column if p.show_right_margin
                                   else 0)
+            pane.set_wrap(int(p.edit_wrap_lines) > 0)
+            pane.set_show_whitespace(p.show_whitespace)
             pane.set_zoom(int(p.zoom))
             if not getattr(pane, "_zoom_wired", False):
                 pane._zoom_wired = True
@@ -825,7 +827,8 @@ class MeldWindow(QMainWindow):
     _FONT_PREF_KEYS = (
         "custom_font", "use_custom_font", "tab_size", "show_line_numbers",
         "use_syntax_highlighting", "highlight_current_line",
-        "show_right_margin", "right_margin_column",
+        "show_right_margin", "right_margin_column", "edit_wrap_lines",
+        "show_whitespace",
     )
     _FOLDER_PREF_KEYS = ("folder_shallow", "folder_apply_text_filters",
                          "filters", "regexes")
@@ -1091,6 +1094,10 @@ class PreferencesDialog(QDialog):
         self.syntax.setChecked(bool(p.use_syntax_highlighting))
         self.hl_line = QCheckBox(_("Highlight the current line"))
         self.hl_line.setChecked(bool(p.highlight_current_line))
+        self.wrap = QCheckBox(_("Enable text wrapping"))
+        self.wrap.setChecked(int(p.edit_wrap_lines) > 0)
+        self.whitespace = QCheckBox(_("Show whitespace"))
+        self.whitespace.setChecked(bool(p.show_whitespace))
         self.right_margin = QCheckBox(_("Show right margin at column"))
         self.right_margin.setChecked(bool(p.show_right_margin))
         self.margin_col = QSpinBox()
@@ -1105,6 +1112,8 @@ class PreferencesDialog(QDialog):
         form.addRow(self.line_numbers)
         form.addRow(self.syntax)
         form.addRow(self.hl_line)
+        form.addRow(self.wrap)
+        form.addRow(self.whitespace)
         form.addRow(self.right_margin, self.margin_col)
         tabs.addTab(editor_tab, _("Editor"))
 
@@ -1165,6 +1174,8 @@ class PreferencesDialog(QDialog):
         p.show_line_numbers = self.line_numbers.isChecked()
         p.use_syntax_highlighting = self.syntax.isChecked()
         p.highlight_current_line = self.hl_line.isChecked()
+        p.edit_wrap_lines = 1 if self.wrap.isChecked() else 0
+        p.show_whitespace = self.whitespace.isChecked()
         p.show_right_margin = self.right_margin.isChecked()
         p.right_margin_column = self.margin_col.value()
         p.theme = self.theme_combo.currentData()

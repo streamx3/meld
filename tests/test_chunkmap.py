@@ -58,3 +58,33 @@ def test_chunkmap_three_way_uses_last_pane(qapp, qtbot):
     view.set_texts(["a\nx\nc\n", "a\nx\nc\n", "a\nR\nc\n"])   # pane2 changed
     chunks = view._chunkmap_chunks()
     assert any(lo <= 1 < hi for _t, lo, hi in chunks)         # change at line 1
+
+
+def test_per_pane_chunkmaps_exist(fd):
+    # Both outer edges carry an overview map; the left one paints pane 0's side.
+    assert len(fd.chunkmaps) == 2
+    assert fd.chunkmap is fd.chunkmaps[-1]          # back-compat alias
+    fd.set_texts(["a\nGONE\nb\n", "a\nb\n"])        # deletion: left side only
+    left_chunks = fd._pane_chunks(0)
+    right_chunks = fd._pane_chunks(1)
+    assert any(hi > lo for _t, lo, hi in left_chunks)     # visible on the left map
+    assert all(hi == lo for _t, lo, hi in right_chunks)   # zero-width on the right
+
+
+def test_wrap_and_whitespace_prefs_apply(qapp, qtbot, tmp_path):
+    from PyQt6.QtCore import QSettings
+    from PyQt6.Qsci import QsciScintilla
+    from meldq.shell import MeldWindow
+    from meldq.util.prefs import Preferences
+    win = MeldWindow(Preferences(
+        QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)))
+    qtbot.addWidget(win)
+    a = tmp_path / "a.txt"; a.write_text("x\n")
+    b = tmp_path / "b.txt"; b.write_text("y\n")
+    v = win.append_filediff([str(a), str(b)])
+    assert v.panes[0].wrapMode() == QsciScintilla.WrapMode.WrapNone
+    win.prefs.edit_wrap_lines = 1
+    assert v.panes[0].wrapMode() == QsciScintilla.WrapMode.WrapWord
+    win.prefs.show_whitespace = True
+    assert v.panes[0].whitespaceVisibility() == \
+        QsciScintilla.WhitespaceVisibility.WsVisible
