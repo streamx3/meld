@@ -33,6 +33,12 @@ def test_binary_identical_and_different(tmp_path):
     b.write_bytes(b"\x00\x01\x02")
     assert dirdiff._files_same([str(a), str(b)], []) == 1
     b.write_bytes(b"\x00\x01\x03")                        # same size, new mtime
+    # Force a distinct mtime: on coarse-granularity filesystems (container
+    # overlayfs) the rewrite can land in the same tick and the StatSig cache
+    # would return the stale "same" verdict.
+    import os
+    bumped = os.stat(b).st_mtime + 10
+    os.utime(b, (bumped, bumped))
     assert dirdiff._files_same([str(a), str(b)], []) == 0
 
 
