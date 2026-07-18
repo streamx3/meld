@@ -35,3 +35,6 @@ meldq = ["resources/**/*", "ui/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyqt6"
+markers = [
+    "legacy: exercises the 1.4-era reference tree (deselect with -m 'not legacy')",
+]

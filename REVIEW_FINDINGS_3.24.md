@@ -761,7 +761,14 @@ and emoji), so that long-standing suspicion from the 1.4-era notes is retired.
 - Async VcView status ✅ (QProcess, 150ms inline window; "Scanning repository…"
   banner; FailedToStart surfaces an error instead of a stuck banner).
 - Still open: external-editor command, overview-map style, VC commit-wrap/merge
-  order, visible size/mtime columns, legacy-test split.
+  order, visible size/mtime columns.
+- Legacy-test split ✅: 223 tests exercising the 1.4 reference tree carry a
+  `legacy` marker (auto-applied in conftest); `-m "not legacy"` runs the fresh
+  product suite (550 tests, ~30%% faster). CI still runs everything.
+
+**Stretch list complete** (2026-07-18). Remaining ideas are only the small
+unported settings: external-editor command, overview-map style, VC
+commit-wrap/merge order, visible size/mtime columns.
 - Packaging build ✅ exercised for real: packaging/dist/Meld.app builds (80 MB),
   --version works, full GUI boots offscreen with a comparison. (dist/ ignored.)
 - i18n ✅ wired: packaging/compile_translations.py compiles the 50 po/ catalogs
