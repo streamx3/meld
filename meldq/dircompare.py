@@ -65,6 +65,12 @@ def entry_states(paths, regexes=()):
     present = [os.path.exists(p) for p in paths]
     states = [STATE_MISSING] * n
     if all(present):
+        # An unreadable directory would otherwise list as empty, so its contents
+        # get misclassified as one-sided and the parent wrongly reads NORMAL
+        # ("the trees are identical"). Flag it ERROR so it is visible and the
+        # walk can refuse to descend into it.
+        if any(os.path.isdir(p) and not os.access(p, os.R_OK) for p in paths):
+            return [STATE_ERROR] * n, True
         try:
             same = files_same([p for p in paths], regexes)
         except OSError:
@@ -138,7 +144,9 @@ def walk(roots, name_filters=(), regexes=()):
             paths = [os.path.join(dp, name) for dp in dir_paths]
             isdir = any(os.path.isdir(p) for p in paths)
             states, different = entry_states(paths, regexes)
-            yield Entry(child_rel, paths, isdir, states, different,
-                        error=STATE_ERROR in states)
-            if isdir:
+            error = STATE_ERROR in states
+            yield Entry(child_rel, paths, isdir, states, different, error=error)
+            # Don't descend into an unreadable directory: listing it would
+            # misclassify the side that IS readable as wholly new.
+            if isdir and not error:
                 todo.append(child_rel)

@@ -142,6 +142,14 @@ class DirDiffView(QWidget):
         if not self._roots:
             return
         entries = list(walk(self._roots, self.name_filters, self.regexes))
+        errored = [e.relpath for e in entries if e.error]
+        if errored:
+            self.infobar.show_message(
+                "Some items could not be read and are marked as errors: "
+                + ", ".join(errored[:5])
+                + (" …" if len(errored) > 5 else ""))
+        else:
+            self.infobar.clear()
         keep = self._filter_entries(entries)
         items_by_rel = {}
         differing = []

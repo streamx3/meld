@@ -5,6 +5,7 @@ import re
 import pytest
 
 from meldq.dircompare import (
+    STATE_ERROR,
     STATE_MISSING,
     STATE_MODIFIED,
     STATE_NEW,
@@ -183,3 +184,26 @@ def test_walk_symlink_cycle_terminates(tmp_path):
     assert len(entries) < 50
     # every relpath is unique (no phantom replicated subtrees)
     assert len(rels) == len(set(rels))
+
+
+# ---------------------------------------------------------------------------
+# D3: an unreadable directory is flagged ERROR, not reported identical
+# ---------------------------------------------------------------------------
+
+def test_unreadable_dir_is_error_not_identical(tmp_path):
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    left, right = tmp_path / "l", tmp_path / "r"
+    (left / "secret").mkdir(parents=True)
+    (right / "secret").mkdir(parents=True)
+    (left / "secret" / "inner.txt").write_bytes(b"x\n")
+    (right / "secret" / "inner.txt").write_bytes(b"x\n")
+    os.chmod(left / "secret", 0)
+    try:
+        entries = {e.relpath: e for e in walk([str(left), str(right)])}
+        assert STATE_ERROR in entries["secret"].states     # visible error
+        assert entries["secret"].different                 # not filtered as same
+        assert "secret/inner.txt" not in entries           # not descended/misclassified
+    finally:
+        os.chmod(left / "secret", 0o755)
