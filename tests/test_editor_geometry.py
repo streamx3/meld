@@ -72,3 +72,14 @@ def test_ctrl_z_does_not_modify_document(editor, qtbot):
     qtbot.keyClick(editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
     # editor swallows Ctrl+Z; without a window UndoSequence the text is unchanged
     assert editor.toPlainText() == "hello world"
+
+
+def test_ctrl_d_does_not_duplicate_line(qapp, qtbot):
+    from PyQt6.QtCore import Qt
+    from meldq.widgets.sciview import MeldSciView
+    v = MeldSciView()
+    qtbot.addWidget(v)
+    v.set_text("line0\nline1\n")
+    v.setCursorPosition(0, 0)
+    qtbot.keyClick(v, Qt.Key.Key_D, Qt.KeyboardModifier.ControlModifier)
+    assert v.text() == "line0\nline1\n"     # Ctrl+D no longer duplicates

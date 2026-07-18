@@ -114,3 +114,18 @@ def test_save_as_new_path_skips_overwrite_check(fd, tmp_path):
     fd.panes[0].set_text("saved as\n")
     fd.save(0, str(other))
     assert other.read_bytes() == b"saved as\n"
+
+
+def test_save_as_drops_stale_watch(fd, tmp_path):
+    # X3: Save-As must not leave the old path watched forever.
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_bytes(b"one\n")
+    b.write_bytes(b"two\n")
+    fd.set_files([str(a), str(b)])          # pane0=a, pane1=b
+    other = tmp_path / "other.txt"
+    fd.panes[0].set_text("moved\n")
+    fd.save(0, str(other))                  # pane0 -> other; a now unreferenced
+    watched = fd._watcher.files()
+    assert str(other) in watched
+    assert str(a) not in watched            # stale old path dropped
+    assert str(b) in watched                # pane1 still watches its file

@@ -184,6 +184,12 @@ class MeldSciView(QsciScintilla):
             QsciScintilla.IndicatorStyle.StraightBoxIndicator, _INLINE_INDICATOR)
         self.SendScintilla(self.SCI_INDICSETUNDER, _INLINE_INDICATOR, True)
 
+        # Free Ctrl+D from Scintilla's built-in "duplicate line" so the shell's
+        # "Next Change" shortcut reaches its QAction instead of silently
+        # mutating the buffer while an editor pane has focus.
+        self.SendScintilla(self.SCI_CLEARCMDKEY,
+                           ord("D") | (self.SCMOD_CTRL << 16))
+
         self.apply_theme(LIGHT)
         self.verticalScrollBar().valueChanged.connect(
             lambda _v: self.scrolled.emit())

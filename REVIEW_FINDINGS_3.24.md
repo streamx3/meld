@@ -384,7 +384,12 @@ Work lands on branch `fix/review-phase0` (not pushed). Suite: 633 → 649 green.
 - 🟡 **Phase 5 (perf):**
   - PF1+PF2 — big-file live re-diff debounced (coalesces keystrokes); _INLINE_MAX guard fixed (or) ✅
     (cooperative-generator rewrite for the pathological single-diff worst case remains, as in the original deferred list)
-- ⬜ Phases 6–7 — pending.
+- 🟡 **Phase 6 (platform/polish):**
+  - X1 — Ctrl+D freed from Scintilla (Next Change works, no line-duplicate) ✅
+  - X3 — Save-As drops the stale watch on the old path ✅
+  - X9 — removed unused QEvent import; X10 — startup message says PyQt6 >= 6.8 ✅
+  - (X6 menu leak already fixed with D10)
+- ⬜ Phase 6 (rest: X2 icons, X5 history, X7/X8 CLI/dialog, X4 font) + Phase 7 (docs) — pending.
 
 Owner-question defaults taken (autonomous run): D5 → default VC-dir name filter
 + defer filter UI; P10/P11 → explicit unsupported/delete messages; DOC5 → will

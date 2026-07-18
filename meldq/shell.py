@@ -12,7 +12,7 @@ reference. See BUILD_PLAN_3.24.md milestone M6.
 
 import os
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,

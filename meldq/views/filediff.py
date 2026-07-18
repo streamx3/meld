@@ -366,8 +366,7 @@ class FileDiffView(QWidget):
         self._paths[pane] = path
         self.panes[pane].setModified(False)
         self._disk_token[pane] = _file_token(path)   # so our write isn't flagged
-        if path not in self._watcher.files():
-            self._watcher.addPath(path)
+        self._watch_files()   # rearm on current paths (drops a stale Save-As path)
 
     @staticmethod
     def _patch_labels(path_a, path_b):

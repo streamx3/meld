@@ -96,7 +96,7 @@ def main(argv=None):
         from PyQt6.QtGui import QIcon
         from PyQt6.QtWidgets import QApplication
     except ImportError as exc:
-        _missing_reqs("PyQt6 >= 6.6", exc)
+        _missing_reqs("PyQt6 >= 6.8", exc)
 
     try:
         from meldq.shell import MeldWindow
