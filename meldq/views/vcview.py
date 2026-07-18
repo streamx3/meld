@@ -196,9 +196,13 @@ class VcView(QWidget):
         relpath = self.row_relpath(index)
         if relpath is not None and self.repo_root is not None:
             try:
-                fn(self.repo_root, relpath)
+                result = fn(self.repo_root, relpath)
             except OSError as exc:
                 self.infobar.show_message("Version control error: %s" % exc)
+                return
+            if not result:
+                self.infobar.show_message(
+                    "Version control error: %s" % (result.message or "failed"))
                 return
             self.refresh()
 
@@ -246,9 +250,13 @@ class VcView(QWidget):
         """Commit the given files with `message` and refresh (no dialog)."""
         if relpaths and message.strip() and self.repo_root is not None:
             try:
-                gitvc.commit(self.repo_root, message, relpaths)
+                result = gitvc.commit(self.repo_root, message, relpaths)
             except OSError as exc:
                 self.infobar.show_message("Version control error: %s" % exc)
+                return
+            if not result:
+                self.infobar.show_message(
+                    "Commit failed: %s" % (result.message or "git error"))
                 return
             self.refresh()
 

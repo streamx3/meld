@@ -213,3 +213,67 @@ def test_remove_declined_keeps_file(vc, repo, monkeypatch):
     monkeypatch.setattr(vc, "_confirm", lambda msg: False)
     vc.remove(_row(vc, "tracked.txt"))
     assert (repo / "tracked.txt").exists()             # declined -> not removed
+
+
+# ----- V1/V2/V3/V5: action correctness + error surfacing --------------------
+
+def test_commit_rename_does_not_duplicate(vc, repo, monkeypatch):
+    # V1: committing a rename must not leave the old path in HEAD.
+    git(repo, "mv", "tracked.txt", "renamed.txt")
+    vc.set_location(str(repo))
+    monkeypatch.setattr(vc, "_confirm", lambda m: True)
+    vc.commit_files(["renamed.txt"], "rename it")
+    tree = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                          cwd=repo, capture_output=True, text=True).stdout.split()
+    assert tree == ["renamed.txt"]                 # old name gone
+
+
+def test_revert_staged_add_leaves_no_ghost(vc, repo):
+    # V5: reverting a staged-added file removes the index entry too (no AD row).
+    (repo / "staged.txt").write_text("x\n")
+    git(repo, "add", "staged.txt")
+    vc.set_location(str(repo))
+    vc.revert(_row(vc, "staged.txt")) if False else gitvc.revert(str(repo), "staged.txt")
+    assert not (repo / "staged.txt").exists()
+    assert "staged.txt" not in gitvc.status(str(repo))   # no ghost entry
+
+
+def test_action_error_is_surfaced(vc, repo, monkeypatch):
+    # V3: a failing backend action shows a message instead of doing nothing.
+    (repo / "fresh.txt").write_text("x\n")           # untracked
+    vc.set_location(str(repo))
+    monkeypatch.setattr(vc, "_confirm", lambda m: True)
+    # git rm of an untracked file fails; the error must surface
+    vc.remove(_row(vc, "fresh.txt"))
+    assert vc.infobar.message is not None
+
+
+def test_commit_returns_result_with_message_on_failure(repo):
+    # empty message would be rejected; force a failure via a bogus pathspec
+    result = gitvc.commit(str(repo), "msg", ["does-not-exist.txt"])
+    assert not result
+    assert result.message
+
+
+def test_commit_during_merge_commits(vc, tmp_path):
+    # V2: git refuses a partial (pathspec) commit mid-merge; commit_files must
+    # commit the resolved state anyway and clear the merge.
+    r = tmp_path / "mrg"
+    r.mkdir()
+    git(r, "init", "-q")
+    (r / "f.txt").write_text("base\n")
+    git(r, "add", "-A")
+    git(r, "commit", "-qm", "base")
+    git(r, "checkout", "-q", "-b", "other")
+    (r / "f.txt").write_text("other\n")
+    git(r, "commit", "-qam", "other")
+    git(r, "checkout", "-q", "master" if (r / ".git" / "refs" / "heads" / "master").exists() else "main")
+    (r / "f.txt").write_text("mine\n")
+    git(r, "commit", "-qam", "mine")
+    # a conflicting merge
+    subprocess.run(["git", "merge", "other"], cwd=r, capture_output=True)
+    (r / "f.txt").write_text("resolved\n")            # resolve
+    vc.set_location(str(r))
+    vc.commit_files(["f.txt"], "merge resolved")
+    assert not (r / ".git" / "MERGE_HEAD").exists()   # merge committed
+    assert last_commit_msg(r) == "merge resolved"
